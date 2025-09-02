@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Cannon Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f8ff; /* AliceBlue */
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            color: #333;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        canvas {
+            display: block;
+            background-color: #ADD8E6; /* LightBlue */
+        }
+        #loader {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.5em;
+            z-index: 10;
+        }
+        #ui-overlay {
+            margin-top: 10px;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI Cannon Game (ONNX.js)</h1>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="loader">🧠 AI 모델 로딩 중...</div>
+    </div>
+    <div id="ui-overlay">Wind: 0.0</div>
+
+    <script>
+        // =====================================================================
+        // PART 1: 게임 설정 및 상수
+        // =====================================================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const loader = document.getElementById('loader');
+        const uiOverlay = document.getElementById('ui-overlay');
+
+        const SCREEN_WIDTH = 800;
+        const SCREEN_HEIGHT = 600;
+        canvas.width = SCREEN_WIDTH;
+        canvas.height = SCREEN_HEIGHT;
+
+        // 색상
+        const COLOR_GROUND = "#228B22";
+        const COLOR_CANNON = "#36454F";
+        const COLOR_BALL = "#000000";
+        const COLOR_HOLE = "#696969";
+
+        // 물리 상수 (Python 환경과 동일)
+        const GRAVITY = -900.0;
+        const BALL_RADIUS = 8;
+        const GROUND_THICKNESS = 50;
+        const HOLE_WIDTH = 40;
+        const HOLE_HEIGHT = 40;
+        const MAX_WIND_FORCE = 200.0;
+        const BALL_ELASTICITY = 0.6; // 지면과 충돌 시 에너지 손실
+        const BALL_FRICTION = 0.98; // 지면에서 구를 때 마찰
+
+        // =====================================================================
+        // PART 2: 게임 상태 및 객체
+        // =====================================================================
+        let ortSession = null;
+        let gameState = 'LOADING'; // LOADING, READY, FIRING, DONE
+
+        let cannon = {
+            x: 100,
+            y: GROUND_THICKNESS + 20,
+            angle: Math.PI / 4,
+            power: 450,
+            barrelLength: 40,
+            minAngle: 0,
+            maxAngle: Math.PI / 2,
+            minPower: 100,
+            maxPower: 800,
+        };
+
+        let target = {
+            x: 0,
+            y: GROUND_THICKNESS,
+        };
+
+        let ball = null;
+        let windForce = 0;
+
+        function resetLevel() {
+            ball = null;
+            target.x = 400 + Math.random() * (SCREEN_WIDTH - 500);
+            windForce = (Math.random() * 2 - 1) * MAX_WIND_FORCE;
+            uiOverlay.textContent = `Wind: ${(windForce / MAX_WIND_FORCE * 10).toFixed(1)}`;
+            gameState = 'READY';
+        }
+
+        // =====================================================================
+        // PART 3: 렌더링 함수 (Canvas 그리기)
+        // =====================================================================
+        function draw() {
+            // 배경 클리어
+            ctx.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            
+            // 지면 그리기
+            ctx.fillStyle = COLOR_GROUND;
+            ctx.fillRect(0, SCREEN_HEIGHT - GROUND_THICKNESS, SCREEN_WIDTH, GROUND_THICKNESS);
+
+            // 대포 그리기
+            ctx.save();
+            ctx.translate(cannon.x, SCREEN_HEIGHT - cannon.y);
+            ctx.rotate(-cannon.angle);
+            ctx.fillStyle = COLOR_CANNON;
+            ctx.fillRect(0, -4, cannon.barrelLength, 8);
+            ctx.restore();
+            ctx.beginPath();
+            ctx.arc(cannon.x, SCREEN_HEIGHT - cannon.y, 15, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 목표 지점 그리기
+            const hx = target.x;
+            const hy = SCREEN_HEIGHT - target.y;
+            ctx.fillStyle = COLOR_HOLE;
+            ctx.fillRect(hx - HOLE_WIDTH / 2 - 4, hy - HOLE_HEIGHT, 4, HOLE_HEIGHT); // Left wall
+            ctx.fillRect(hx + HOLE_WIDTH / 2, hy - HOLE_HEIGHT, 4, HOLE_HEIGHT);     // Right wall
+            ctx.fillRect(hx - HOLE_WIDTH / 2, hy, HOLE_WIDTH, 4);                     // Bottom wall
+
+            // 포탄 그리기
+            if (ball) {
+                ctx.beginPath();
+                ctx.arc(ball.x, SCREEN_HEIGHT - ball.y, BALL_RADIUS, 0, Math.PI * 2);
+                ctx.fillStyle = COLOR_BALL;
+                ctx.fill();
+            }
+        }
+
+        // =====================================================================
+        // PART 4: 물리 엔진 (라이브러리 없이 직접 구현)
+        // =====================================================================
+        function updatePhysics(dt) {
+            if (!ball) return;
+
+            // 중력과 바람 적용
+            ball.vy += GRAVITY * dt;
+            ball.vx += windForce * dt;
+
+            // 위치 업데이트
+            ball.x += ball.vx * dt;
+            ball.y += ball.vy * dt;
+
+            // 지면 충돌 감지
+            if (ball.y < GROUND_THICKNESS + BALL_RADIUS) {
+                ball.y = GROUND_THICKNESS + BALL_RADIUS;
+                ball.vy *= -BALL_ELASTICITY; // 탄성 적용
+                ball.vx *= BALL_FRICTION;    // 마찰 적용
+            }
+
+            // 목표 지점 성공 판정
+            const isInsideHole = Math.abs(ball.x - target.x) < HOLE_WIDTH / 2 && ball.y < GROUND_THICKNESS + HOLE_HEIGHT;
+            const isSettled = Math.abs(ball.vx) < 1 && Math.abs(ball.vy) < 1;
+            if (isInsideHole && isSettled) {
+                console.log("Success! Resetting level.");
+                gameState = 'DONE'; // 성공
+            }
+
+            // 실패 판정 (화면 밖 또는 멈춤)
+            const isOutOfBounds = ball.x < 0 || ball.x > SCREEN_WIDTH;
+            if (isOutOfBounds || (ball.y <= GROUND_THICKNESS + BALL_RADIUS && isSettled)) {
+                console.log("Failed. Resetting level.");
+                gameState = 'DONE'; // 실패
+            }
+        }
+
+        // =====================================================================
+        // PART 5: AI 모델 통합 (ONNX.js)
+        // =====================================================================
+        
+        /**
+         * 현재 게임 상태를 가져와 모델 입력에 맞게 -1과 1 사이로 정규화합니다.
+         * 이 함수의 순서와 계산은 Python 환경의 _get_obs와 완벽히 일치해야 합니다.
+         */
+        function getNormalizedObservation() {
+            const norm_angle = (cannon.angle - cannon.minAngle) / (cannon.maxAngle - cannon.minAngle) * 2 - 1;
+            const norm_power = (cannon.power - cannon.minPower) / (cannon.maxPower - cannon.minPower) * 2 - 1;
+            const norm_target_x = (target.x / SCREEN_WIDTH) * 2 - 1;
+            const norm_target_y = (target.y / SCREEN_HEIGHT) * 2 - 1;
+            const norm_wind = windForce / MAX_WIND_FORCE;
+            
+            return new Float32Array([norm_angle, norm_power, norm_target_x, norm_target_y, norm_wind]);
+        }
+
+        /**
+         * 모델의 출력(정규화된 행동)을 실제 게임의 각도와 파워 값으로 변환합니다.
+         */
+        function unnormalizeAction(normalizedAction) {
+            const angle = (normalizedAction[0] + 1) / 2 * (cannon.maxAngle - cannon.minAngle) + cannon.minAngle;
+            const power = (normalizedAction[1] + 1) / 2 * (cannon.maxPower - cannon.minPower) + cannon.minPower;
+            return { angle, power };
+        }
+        
+        async function runInferenceAndFire() {
+            // 1. 관측값 가져오기 및 정규화
+            const observation = getNormalizedObservation();
+
+            // 2. ONNX Runtime 텐서 생성
+            const obsTensor = new ort.Tensor('float32', observation, [1, 5]); // [batch_size, num_features]
+
+            // 3. 모델 추론 실행
+            const results = await ortSession.run({ 'observation': obsTensor });
+            const actionTensor = results.action; // 출력 이름은 'action'
+
+            // 4. 행동 값 변환 및 적용
+            const { angle, power } = unnormalizeAction(actionTensor.data);
+            cannon.angle = angle;
+            cannon.power = power;
+
+            // 5. 포탄 발사
+            fireCannon();
+        }
+
+        function fireCannon() {
+            const startX = cannon.x + Math.cos(cannon.angle) * cannon.barrelLength;
+            const startY = cannon.y + Math.sin(cannon.angle) * cannon.barrelLength;
+            
+            ball = {
+                x: startX,
+                y: startY,
+                vx: Math.cos(cannon.angle) * cannon.power,
+                vy: Math.sin(cannon.angle) * cannon.power,
+            };
+            gameState = 'FIRING';
+        }
+
+        // =====================================================================
+        // PART 6: 메인 게임 루프 및 초기화
+        // =====================================================================
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const dt = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+
+            if (gameState === 'READY') {
+                runInferenceAndFire();
+            }
+            
+            if (gameState === 'FIRING') {
+                updatePhysics(dt);
+            }
+            
+            if (gameState === 'DONE') {
+                setTimeout(resetLevel, 1000); // 1초 후 다음 레벨
+                gameState = 'WAITING'; // 중복 호출 방지
+            }
+
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        async function initialize() {
+            try {
+                console.log("ONNX Runtime 세션 생성 시도...");
+                ortSession = await ort.InferenceSession.create('./model.onnx');
+                console.log("AI 모델 로딩 성공!");
+                
+                loader.style.display = 'none'; // 로더 숨기기
+                
+                resetLevel(); // 첫 레벨 시작
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop); // 게임 루프 시작
+
+            } catch (e) {
+                console.error(`AI 모델 로딩 실패: ${e}`);
+                loader.textContent = "오류: model.onnx 로드 실패. 파일이 올바른 위치에 있는지 확인하세요.";
+            }
+        }
+
+        // 게임 시작
+        initialize();
+    </script>
+</body>
+</html>
