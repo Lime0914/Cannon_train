@@ -232,12 +232,17 @@
             const results = await ortSession.run({ 'observation': obsTensor });
             const actionTensor = results.action; // 출력 이름은 'action'
 
-            // 4. 행동 값 변환 및 적용
-            const { angle, power } = unnormalizeAction(actionTensor.data);
+            // 4. 행동 값 변환
+            let { angle, power } = unnormalizeAction(actionTensor.data);
+            
+            // [핵심 수정] AI가 비정상적인 값을 출력하더라도 각도를 0과 90도 사이로 제한합니다.
+            angle = Math.max(cannon.minAngle, Math.min(cannon.maxAngle, angle));
+
+            // 5. 변환된 값을 대포에 적용
             cannon.angle = angle;
             cannon.power = power;
 
-            // 5. 포탄 발사
+            // 6. 포탄 발사
             fireCannon();
         }
 
