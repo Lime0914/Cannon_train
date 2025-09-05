@@ -10,7 +10,8 @@ const SCREEN_HEIGHT = 600;
 canvas.width = SCREEN_WIDTH;
 canvas.height = SCREEN_HEIGHT;
 
-const { Engine, Runner, Bodies, Composite, Events, Body, Vector, Category } = Matter;
+// [핵심 수정] Matter 라이브러리에서 존재하지 않는 'Category'를 제거합니다.
+const { Engine, Runner, Bodies, Composite, Events, Body, Vector } = Matter;
 
 const engine = Engine.create();
 const world = engine.world;
@@ -18,9 +19,10 @@ const runner = Runner.create();
 
 engine.gravity.y = 1.5;
 
+// [핵심 수정] Category.create() 함수 호출 대신, 숫자 값을 직접 할당합니다.
 const collisionCategories = {
-    ball: Category.create(0x0001),
-    wall: Category.create(0x0002),
+    ball: 0x0001, // 2진수로 0001
+    wall: 0x0002, // 2진수로 0010
 };
 
 // 게임 상수
@@ -150,8 +152,6 @@ function draw() {
 // PART 4: AI 모델 통합 (ONNX.js)
 // =====================================================================
 function getNormalizedObservation() {
-    // Python 환경의 관측값과 순서/정규화 방식을 정확히 일치시킴
-    // Python 각도(0 ~ pi/2)와 JS 각도(0 ~ -pi/2)의 차이를 보정
     const python_angle = -cannon.angle; 
     const norm_angle = (python_angle - cannon.minAngle) / (cannon.maxAngle - cannon.minAngle) * 2 - 1;
     const norm_power = (cannon.power - cannon.minPower) / (cannon.maxPower - cannon.minPower) * 2 - 1;
@@ -175,10 +175,9 @@ async function runInferenceAndFire() {
     const actionTensor = results.action;
     let { angle, power } = unnormalizeAction(actionTensor.data);
     
-    // AI 출력을 게임 환경에 맞게 최종 보정
     angle = Math.max(cannon.minAngle, Math.min(cannon.maxAngle, angle));
 
-    cannon.angle = -angle; // Y-down 좌표계를 위해 각도 반전
+    cannon.angle = -angle;
     cannon.power = power;
     fireCannon();
 }
