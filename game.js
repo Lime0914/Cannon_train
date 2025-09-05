@@ -10,8 +10,7 @@ const SCREEN_HEIGHT = 600;
 canvas.width = SCREEN_WIDTH;
 canvas.height = SCREEN_HEIGHT;
 
-// [핵심 수정] Matter 라이브러리에서 존재하지 않는 'Category'를 제거합니다.
-const { Engine, Runner, Bodies, Composite, Events, Body, Vector } = Matter;
+const { Engine, Runner, Bodies, Composite, Events, Body, Vector, Category } = Matter;
 
 const engine = Engine.create();
 const world = engine.world;
@@ -19,10 +18,9 @@ const runner = Runner.create();
 
 engine.gravity.y = 1.5;
 
-// [핵심 수정] Category.create() 함수 호출 대신, 숫자 값을 직접 할당합니다.
 const collisionCategories = {
-    ball: 0x0001, // 2진수로 0001
-    wall: 0x0002, // 2진수로 0010
+    ball: 0x0001,
+    wall: 0x0002,
 };
 
 // 게임 상수
@@ -179,11 +177,13 @@ async function runInferenceAndFire() {
 
     cannon.angle = -angle;
     cannon.power = power;
-    fireCannon();
+    
+    // [핵심 수정] fireCannon 함수에 angle과 power 값을 인자로 전달합니다.
+    fireCannon(cannon.angle, cannon.power);
 }
 
-function fireCannon() {
-    const angle = cannon.angle;
+// [핵심 수정] fireCannon 함수가 angle과 power를 인자로 받도록 수정합니다.
+function fireCannon(angle, power) {
     const startX = cannon.x + Math.cos(angle) * cannon.barrelLength;
     const startY = cannon.y + Math.sin(angle) * cannon.barrelLength;
     
