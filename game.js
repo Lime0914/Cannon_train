@@ -10,13 +10,14 @@ const SCREEN_HEIGHT = 600;
 canvas.width = SCREEN_WIDTH;
 canvas.height = SCREEN_HEIGHT;
 
-const { Engine, Runner, Bodies, Composite, Events, Body, Vector, Category } = Matter;
+const { Engine, Runner, Bodies, Composite, Events, Body, Vector } = Matter;
 
 const engine = Engine.create();
 const world = engine.world;
 const runner = Runner.create();
 
-engine.gravity.y = 1.5;
+// [핵심 수정] 중력 값을 파이썬 환경과 더 유사하게 느끼도록 조정합니다.
+engine.gravity.y = 2.0;
 
 const collisionCategories = {
     ball: 0x0001,
@@ -178,11 +179,9 @@ async function runInferenceAndFire() {
     cannon.angle = -angle;
     cannon.power = power;
     
-    // [핵심 수정] fireCannon 함수에 angle과 power 값을 인자로 전달합니다.
     fireCannon(cannon.angle, cannon.power);
 }
 
-// [핵심 수정] fireCannon 함수가 angle과 power를 인자로 받도록 수정합니다.
 function fireCannon(angle, power) {
     const startX = cannon.x + Math.cos(angle) * cannon.barrelLength;
     const startY = cannon.y + Math.sin(angle) * cannon.barrelLength;
@@ -201,7 +200,8 @@ function fireCannon(angle, power) {
 
     Composite.add(world, ball);
 
-    const forceMagnitude = power / 1000;
+    // [핵심 수정] 힘의 크기를 파이썬 환경과 더 유사하게 느끼도록 변환 계수를 조정합니다.
+    const forceMagnitude = power / 15000;
     const force = Vector.create(Math.cos(angle) * forceMagnitude, Math.sin(angle) * forceMagnitude);
     Body.applyForce(ball, ball.position, force);
     
@@ -213,7 +213,8 @@ function fireCannon(angle, power) {
 // =====================================================================
 Events.on(engine, 'beforeUpdate', () => {
     if (ball) {
-        const wind_force_magnitude = (windForce / MAX_WIND_FORCE) * 0.002;
+        // [핵심 수정] 바람의 힘 또한 다른 물리값들과의 비율에 맞게 조정합니다.
+        const wind_force_magnitude = (windForce / MAX_WIND_FORCE) * 0.0005;
         Body.applyForce(ball, ball.position, { x: wind_force_magnitude, y: 0 });
     }
 });
