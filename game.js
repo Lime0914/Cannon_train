@@ -150,9 +150,10 @@ function draw() {
 // PART 4: AI 모델 통합 (ONNX.js)
 // =====================================================================
 function getNormalizedObservation() {
-    const js_min_angle = -cannon.maxAngle;
-    const js_max_angle = cannon.minAngle;
-    const norm_angle = (cannon.angle - js_min_angle) / (js_max_angle - js_min_angle) * 2 - 1;
+    // Python 환경의 관측값과 순서/정규화 방식을 정확히 일치시킴
+    // Python 각도(0 ~ pi/2)와 JS 각도(0 ~ -pi/2)의 차이를 보정
+    const python_angle = -cannon.angle; 
+    const norm_angle = (python_angle - cannon.minAngle) / (cannon.maxAngle - cannon.minAngle) * 2 - 1;
     const norm_power = (cannon.power - cannon.minPower) / (cannon.maxPower - cannon.minPower) * 2 - 1;
     const norm_target_x = (target.x / SCREEN_WIDTH) * 2 - 1;
     const python_target_y = GROUND_THICKNESS;
@@ -170,15 +171,14 @@ function unnormalizeAction(normalizedAction) {
 async function runInferenceAndFire() {
     const observation = getNormalizedObservation();
     const obsTensor = new ort.Tensor('float32', observation, [1, 5]);
-    
-    // [핵심 수정] ONNX 세션 실행 코드를 올바른 방식으로 변경합니다.
     const results = await ortSession.run({ 'observation': obsTensor });
-
     const actionTensor = results.action;
     let { angle, power } = unnormalizeAction(actionTensor.data);
+    
+    // AI 출력을 게임 환경에 맞게 최종 보정
     angle = Math.max(cannon.minAngle, Math.min(cannon.maxAngle, angle));
 
-    cannon.angle = -angle;
+    cannon.angle = -angle; // Y-down 좌표계를 위해 각도 반전
     cannon.power = power;
     fireCannon();
 }
@@ -278,4 +278,5 @@ async function initialize() {
     }
 }
 
+// 게임 시작
 initialize();
