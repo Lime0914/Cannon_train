@@ -1,7 +1,8 @@
 // =====================================================================
-// PART 1: 게임 설정 및 Matter.js 초기화
+// PART 1: 게임 설정 및 Chipmunk.js 초기화
 // =====================================================================
 const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 const loader = document.getElementById('loader');
 const uiOverlay = document.getElementById('ui-overlay');
 
@@ -10,29 +11,18 @@ const SCREEN_HEIGHT = 600;
 canvas.width = SCREEN_WIDTH;
 canvas.height = SCREEN_HEIGHT;
 
-const { Engine, Runner, Bodies, Composite, Events, Body, Vector } = Matter;
+// Chipmunk.js 초기화 (cp는 Chipmunk의 네임스페이스)
+const cp = this.cp; 
+const space = new cp.Space();
+// Python과 동일한 중력 값 사용
+space.gravity = cp.v(0, -900); 
 
-const engine = Engine.create();
-const world = engine.world;
-const runner = Runner.create();
+// 게임 상수 (Python과 거의 동일)
+const BALL_COLLISION_TYPE = 1;
+const SENSOR_COLLISION_TYPE = 2;
+const GROUND_COLLISION_TYPE = 3;
 
-engine.gravity.y = 2.0;
-
-const collisionCategories = {
-    ball: 0x0001,
-    wall: 0x0002,
-};
-
-// 게임 상수
-const COLOR_GROUND = "#228B22";
-const COLOR_CANNON = "#36454F";
-const COLOR_BALL = "#000000";
-const COLOR_HOLE = "#696969";
-
-const BALL_RADIUS = 8;
 const GROUND_THICKNESS = 50;
-const HOLE_WIDTH = 40;
-const HOLE_HEIGHT = 40;
 const MAX_WIND_FORCE = 200.0;
 
 // =====================================================================
@@ -42,9 +32,8 @@ let ortSession = null;
 let gameState = 'LOADING';
 
 let cannon = {
-    x: 100,
-    y: SCREEN_HEIGHT - (GROUND_THICKNESS + 20),
-    angle: 0, // 초기 각도
+    pos: cp.v(100, GROUND_THICKNESS + 20),
+    angle: Math.PI / 4,
     power: 450,
     barrelLength: 40,
     minAngle: 0,
@@ -53,109 +42,120 @@ let cannon = {
     maxPower: 800,
 };
 
-let target = { x: 0, y: SCREEN_HEIGHT - GROUND_THICKNESS, walls: [], sensor: null };
-let ball = null;
-let windForce = 0;
+let target = { pos: cp.v(0, 0), shapes: [] };
+let ball = { body: null, shape: null };
+let windForce = 0.0;
+let ballInHole = false;
 
-const ground = Bodies.rectangle(
-    SCREEN_WIDTH / 2, 
-    SCREEN_HEIGHT - (GROUND_THICKNESS / 2), 
-    SCREEN_WIDTH, 
-    GROUND_THICKNESS, 
-    { 
-        isStatic: true, 
-        label: 'ground',
-        collisionFilter: {
-            category: collisionCategories.wall,
-            mask: collisionCategories.ball
-        }
-    }
-);
-Composite.add(world, ground);
+// 지면 생성 (Pymunk 방식과 매우 유사)
+const groundBody = space.staticBody;
+const groundShape = new cp.SegmentShape(groundBody, cp.v(0, GROUND_THICKNESS), cp.v(SCREEN_WIDTH, GROUND_THICKNESS), 5);
+groundShape.setElasticity(0.6);
+groundShape.setFriction(1.2);
+groundShape.collision_type = GROUND_COLLISION_TYPE;
+space.addShape(groundShape);
+
+// 충돌 핸들러 설정
+space.addCollisionHandler(BALL_COLLISION_TYPE, SENSOR_COLLISION_TYPE, () => {
+    ballInHole = true;
+    return true; // 계속 충돌 처리
+}, null, null, null);
+
 
 function resetLevel() {
-    if (ball) { Composite.remove(world, ball); ball = null; }
-    if (target.walls.length > 0) { Composite.remove(world, target.walls); }
-    if (target.sensor) { Composite.remove(world, target.sensor); }
+    if (ball.body) {
+        space.removeBody(ball.body);
+        space.removeShape(ball.shape);
+        ball = { body: null, shape: null };
+    }
+    target.shapes.forEach(shape => space.removeShape(shape));
+    target.shapes = [];
 
-    target.x = 400 + Math.random() * (SCREEN_WIDTH - 500);
+    const targetX = 400 + Math.random() * (SCREEN_WIDTH - 500);
+    target.pos = cp.v(targetX, GROUND_THICKNESS);
     windForce = (Math.random() * 2 - 1) * MAX_WIND_FORCE;
     uiOverlay.textContent = `Wind: ${(windForce / MAX_WIND_FORCE * 10).toFixed(1)}`;
     
-    const hx = target.x;
-    const hy = target.y;
+    // 목표 지점 생성 (Pymunk API와 거의 동일)
+    const holeWidth = 40, holeHeight = 40, thickness = 4;
+    const hw = holeWidth / 2;
+    const targetBody = space.staticBody;
 
-    const wallOptions = { 
-        isStatic: true, 
-        label: 'targetWall',
-        render: { fillStyle: COLOR_HOLE },
-        collisionFilter: {
-            category: collisionCategories.wall,
-            mask: collisionCategories.ball
-        }
-    };
-    const leftWall = Bodies.rectangle(hx - HOLE_WIDTH / 2, hy - HOLE_HEIGHT / 2, 4, HOLE_HEIGHT, wallOptions);
-    const rightWall = Bodies.rectangle(hx + HOLE_WIDTH / 2, hy - HOLE_HEIGHT / 2, 4, HOLE_HEIGHT, wallOptions);
-    const bottomWall = Bodies.rectangle(hx, hy, HOLE_WIDTH + 4, 4, wallOptions);
-    target.walls = [leftWall, rightWall, bottomWall];
+    const leftWall = new cp.SegmentShape(targetBody, cp.v(targetX - hw, GROUND_THICKNESS), cp.v(targetX - hw, GROUND_THICKNESS + holeHeight), thickness);
+    const rightWall = new cp.SegmentShape(targetBody, cp.v(targetX + hw, GROUND_THICKNESS), cp.v(targetX + hw, GROUND_THICKNESS + holeHeight), thickness);
+    const bottomWall = new cp.SegmentShape(targetBody, cp.v(targetX - hw, GROUND_THICKNESS), cp.v(targetX + hw, GROUND_THICKNESS), thickness);
     
-    target.sensor = Bodies.rectangle(hx, hy - HOLE_HEIGHT/2, HOLE_WIDTH - 4, HOLE_HEIGHT, {
-        isStatic: true,
-        isSensor: true,
-        label: 'successSensor'
-    });
+    const sensor = new cp.SegmentShape(targetBody, cp.v(targetX - hw, GROUND_THICKNESS + thickness), cp.v(targetX + hw, GROUND_THICKNESS + thickness), 1);
+    sensor.sensor = true;
+    sensor.collision_type = SENSOR_COLLISION_TYPE;
 
-    Composite.add(world, [...target.walls, target.sensor]);
+    target.shapes = [leftWall, rightWall, bottomWall, sensor];
+    space.addShapes(target.shapes);
+
     gameState = 'READY';
 }
 
 // =====================================================================
-// PART 3: 렌더링 함수 (Canvas 그리기)
+// PART 3: 렌더링 함수
 // =====================================================================
-const ctx = canvas.getContext('2d');
+function flipY(v) { return cp.v(v.x, SCREEN_HEIGHT - v.y); }
 
 function draw() {
     ctx.fillStyle = '#ADD8E6';
     ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-    ctx.fillStyle = COLOR_GROUND;
-    ctx.fillRect(0, SCREEN_HEIGHT - GROUND_THICKNESS, SCREEN_WIDTH, SCREEN_HEIGHT);
-    
-    ctx.fillStyle = COLOR_HOLE;
-    target.walls.forEach(wall => {
-        ctx.beginPath();
-        wall.vertices.forEach(v => ctx.lineTo(v.x, v.y));
-        ctx.closePath();
-        ctx.fill();
-    });
+    ctx.fillStyle = '#228B22';
+    ctx.fillRect(0, SCREEN_HEIGHT - GROUND_THICKNESS, SCREEN_WIDTH, GROUND_THICKNESS);
 
-    if (ball) {
+    // 목표 지점 그리기
+    ctx.strokeStyle = '#696969';
+    ctx.lineWidth = 8;
+    const tPos = target.pos;
+    const hw = 40/2, hh = 40;
+    ctx.beginPath();
+    let p1 = flipY(cp.v(tPos.x - hw, tPos.y + hh));
+    let p2 = flipY(cp.v(tPos.x - hw, tPos.y));
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    p1 = flipY(cp.v(tPos.x + hw, tPos.y));
+    ctx.lineTo(p1.x, p1.y);
+    p2 = flipY(cp.v(tPos.x + hw, tPos.y + hh));
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+
+    // 대포 그리기
+    const barrelEnd = cp.v.add(cannon.pos, cp.v.mult(cp.v.forangle(cannon.angle), cannon.barrelLength));
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#36454F';
+    ctx.beginPath();
+    let startP = flipY(cannon.pos);
+    let endP = flipY(barrelEnd);
+    ctx.moveTo(startP.x, startP.y);
+    ctx.lineTo(endP.x, endP.y);
+    ctx.stroke();
+    ctx.fillStyle = '#36454F';
+    ctx.beginPath();
+    ctx.arc(startP.x, startP.y, 15, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // 포탄 그리기
+    if (ball.body) {
+        ctx.fillStyle = '#000000';
+        const pos = flipY(ball.body.p);
         ctx.beginPath();
-        ctx.arc(ball.position.x, ball.position.y, BALL_RADIUS, 0, Math.PI * 2);
-        ctx.fillStyle = COLOR_BALL;
+        ctx.arc(pos.x, pos.y, 8, 0, 2*Math.PI);
         ctx.fill();
     }
-
-    ctx.save();
-    ctx.translate(cannon.x, cannon.y);
-    ctx.rotate(cannon.angle);
-    ctx.fillStyle = COLOR_CANNON;
-    ctx.fillRect(0, -4, cannon.barrelLength, 8);
-    ctx.restore();
-    ctx.beginPath();
-    ctx.arc(cannon.x, cannon.y, 15, 0, Math.PI * 2);
-    ctx.fill();
 }
+
 
 // =====================================================================
 // PART 4: AI 모델 통합 (ONNX.js)
 // =====================================================================
 function getNormalizedObservation() {
-    const python_angle = -cannon.angle; 
-    const norm_angle = (python_angle - cannon.minAngle) / (cannon.maxAngle - cannon.minAngle) * 2 - 1;
+    const norm_angle = (cannon.angle - cannon.minAngle) / (cannon.maxAngle - cannon.minAngle) * 2 - 1;
     const norm_power = (cannon.power - cannon.minPower) / (cannon.maxPower - cannon.minPower) * 2 - 1;
-    const norm_target_x = (target.x / SCREEN_WIDTH) * 2 - 1;
-    const python_target_y = GROUND_THICKNESS;
-    const norm_target_y = (python_target_y / SCREEN_HEIGHT) * 2 - 1;
+    const norm_target_x = (target.pos.x / SCREEN_WIDTH) * 2 - 1;
+    const norm_target_y = (target.pos.y / SCREEN_HEIGHT) * 2 - 1;
     const norm_wind = windForce / MAX_WIND_FORCE;
     return new Float32Array([norm_angle, norm_power, norm_target_x, norm_target_y, norm_wind]);
 }
@@ -175,66 +175,49 @@ async function runInferenceAndFire() {
     
     angle = Math.max(cannon.minAngle, Math.min(cannon.maxAngle, angle));
 
-    // [핵심 수정] 디버깅을 위해 AI가 예측한 각도 값을 콘솔에 출력합니다.
-    console.log("AI Predicted Angle (JS):", -angle, "(Python Style):", angle);
-
-    cannon.angle = -angle;
+    cannon.angle = angle; // JS 좌표계 변환 불필요
     cannon.power = power;
-    
-    fireCannon(cannon.angle, cannon.power);
+    fireCannon();
 }
 
-function fireCannon(angle, power) {
-    const startX = cannon.x + Math.cos(angle) * cannon.barrelLength;
-    const startY = cannon.y + Math.sin(angle) * cannon.barrelLength;
-    
-    ball = Bodies.circle(startX, startY, BALL_RADIUS, {
-        label: 'ball',
-        restitution: 0.6,
-        friction: 0.05,
-        frictionAir: 0.01,
-        density: 0.005,
-        collisionFilter: {
-            category: collisionCategories.ball,
-            mask: collisionCategories.wall
-        }
-    });
+function fireCannon() {
+    const angle = cannon.angle;
+    const power = cannon.power;
 
-    Composite.add(world, ball);
-
-    const forceMagnitude = power / 15000;
-    const force = Vector.create(Math.cos(angle) * forceMagnitude, Math.sin(angle) * forceMagnitude);
-    Body.applyForce(ball, ball.position, force);
+    const mass = 1.05;
+    const radius = 8;
+    const moment = cp.momentForCircle(mass, 0, radius, cp.v(0,0));
+    const body = new cp.Body(mass, moment);
     
+    const startPos = cp.v.add(cannon.pos, cp.v.mult(cp.v.forangle(angle), cannon.barrelLength));
+    body.setP(startPos);
+    
+    const shape = new cp.CircleShape(body, radius, cp.v(0,0));
+    shape.setElasticity(0.6);
+    shape.setFriction(0.9);
+    shape.collision_type = BALL_COLLISION_TYPE;
+
+    space.addBody(body);
+    space.addShape(shape);
+    ball.body = body;
+    ball.shape = shape;
+
+    // Python과 동일한 Impulse 적용 방식
+    const impulse = cp.v.mult(cp.v.forangle(angle), power);
+    body.applyImpulse(impulse, cp.v(0,0));
+    
+    ballInHole = false;
     gameState = 'FIRING';
 }
 
 // =====================================================================
-// PART 5: 메인 게임 루프 및 이벤트 처리
+// PART 5: 메인 게임 루프
 // =====================================================================
-Events.on(engine, 'beforeUpdate', () => {
-    if (ball) {
-        const wind_force_magnitude = (windForce / MAX_WIND_FORCE) * 0.0005;
-        Body.applyForce(ball, ball.position, { x: wind_force_magnitude, y: 0 });
-    }
-});
+let lastTime = 0;
+function gameLoop(timestamp) {
+    const dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
 
-Events.on(engine, 'collisionStart', (event) => {
-    event.pairs.forEach(pair => {
-        const { bodyA, bodyB } = pair;
-        if ((bodyA.label === 'ball' && bodyB.label === 'successSensor') ||
-            (bodyA.label === 'successSensor' && bodyB.label === 'ball')) {
-            setTimeout(() => {
-                 if (ball && ball.speed < 1) {
-                    console.log("Success! Resetting level.");
-                    gameState = 'DONE';
-                 }
-            }, 500);
-        }
-    });
-});
-
-function gameLoop() {
     if (gameState === 'LOADING') {
         requestAnimationFrame(gameLoop);
         return;
@@ -243,17 +226,27 @@ function gameLoop() {
     if (gameState === 'READY') {
         runInferenceAndFire();
     }
+    
+    // 물리 시뮬레이션 진행
+    if (gameState === 'FIRING') {
+        space.gravity = cp.v(windForce, -900);
+        space.step(1/60); // 고정된 타임스텝 사용
 
-    if (ball && gameState === 'FIRING') {
-        const isOutOfBounds = ball.position.x < 0 || ball.position.x > SCREEN_WIDTH;
-        const isStopped = ball.speed < 0.1 && ball.position.y > SCREEN_HEIGHT - GROUND_THICKNESS - BALL_RADIUS * 2;
+        // 종료 조건 확인
+        if (ball.body) {
+            const pos = ball.body.p;
+            const velMag = cp.v.len(ball.body.v);
+            
+            const isOutOfBounds = ! (0 < pos.x < SCREEN_WIDTH && pos.y > 0);
+            const isStopped = pos.y.toFixed(2) <= GROUND_THICKNESS.toFixed(2) && velMag < 1.0;
 
-        if (isOutOfBounds || isStopped) {
-            console.log(`Failed. Reason: ${isOutOfBounds ? 'Out of bounds' : 'Stopped'}. Resetting.`);
-            gameState = 'DONE';
+            if (isOutOfBounds || isStopped || ballInHole) {
+                console.log(`Episode ended. Success: ${ballInHole}, Stopped: ${isStopped}, Out: ${isOutOfBounds}`);
+                gameState = 'DONE';
+            }
         }
     }
-    
+
     if (gameState === 'DONE') {
         setTimeout(resetLevel, 1000);
         gameState = 'WAITING';
@@ -270,7 +263,6 @@ async function initialize() {
         loader.style.display = 'none';
         
         resetLevel();
-        Runner.run(runner, engine);
         requestAnimationFrame(gameLoop);
     } catch (e) {
         console.error(`AI 모델 로딩 실패: ${e}`);
@@ -278,5 +270,4 @@ async function initialize() {
     }
 }
 
-// 게임 시작
 initialize();
