@@ -8,7 +8,1473 @@
     <link rel="stylesheet" href="style.css">
     
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-    <script src="https://files.slembcke.net/temp/chipmunk.js"></script>
+    
+    <script>
+    /* Copyright (c) 2007-2011 Scott Lembcke
+     * * Permission is hereby granted, free of charge, to any person obtaining a copy
+     * of this software and associated documentation files (the "Software"), to deal
+     * in the Software without restriction, including without limitation the rights
+     * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     * copies of the Software, and to permit persons to whom the Software is
+     * furnished to do so, subject to the following conditions:
+     * * The above copyright notice and this permission notice shall be included in
+     * all copies or substantial portions of the Software.
+     * * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+     * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+     * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+     * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+     * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+     * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+     * SOFTWARE.
+     */
+
+    // This file is ported from C to JavaScript by longyang
+    // The original source code is from https://github.com/slembcke/Chipmunk-Physics
+    // Porting is done manually, and may have some mistakes.
+
+    var cp;
+    if (typeof exports === 'undefined') {
+        cp = {};
+
+        if (typeof window === 'object') {
+            window.cp = cp;
+        }
+    } else {
+        cp = exports;
+    }
+
+    (function () {
+        "use strict";
+
+        var VERSION = cp.VERSION = "0.0.1";
+
+        //-------------------------------------------------------------------------------------------------
+        // some short cut for frequent used function
+        var min = Math.min;
+        var max = Math.max;
+        var abs = Math.abs;
+        var cos = Math.cos;
+        var sin = Math.sin;
+        var sqrt = Math.sqrt;
+        var floor = Math.floor;
+        var round = Math.round;
+
+        //-------------------------------------------------------------------------------------------------
+        var assert = function (value, message) {
+            if (!value) {
+                throw new Error("Assertion failed: " + message);
+            }
+        };
+
+        var assertSoft = function (value, message) {
+            if (!value && console.warn) {
+                console.warn("ASSERTION FAILED: " + message);
+            }
+        };
+
+        //-------------------------------------------------------------------------------------------------
+        // A universally unique identifier.
+        var unique_id_counter = 0;
+        cp.unique_id = function () {
+            return unique_id_counter++;
+        };
+
+        //-------------------------------------------------------------------------------------------------
+        var v = cp.v = function (x, y) {
+            return {x: x, y: y};
+        };
+
+        cp.vzero = v(0, 0);
+
+        // Vector, cpVect
+
+        // Add two vectors
+        cp.v.add = function (v1, v2) {
+            return v(v1.x + v2.x, v1.y + v2.y);
+        };
+
+        // Subtract two vectors.
+        cp.v.sub = function (v1, v2) {
+            return v(v1.x - v2.x, v1.y - v2.y);
+        };
+
+        // Negate a vector.
+        cp.v.neg = function (vect) {
+            return v(-vect.x, -vect.y);
+        };
+
+        // Scalar multiplication.
+        cp.v.mult = function (vect, s) {
+            return v(vect.x * s, vect.y * s);
+        };
+
+        // 2D vector dot product.
+        cp.v.dot = function (v1, v2) {
+            return v1.x * v2.x + v1.y * v2.y;
+        };
+
+        // 2D vector cross product. z is the out vector
+        cp.v.cross = function (v1, v2) {
+            return v1.x * v2.y - v1.y * v2.x;
+        };
+
+        // Returns a perpendicular vector. (90 degree rotation)
+        cp.v.perp = function (vect) {
+            return v(-vect.y, vect.x);
+        };
+
+        // Returns a perpendicular vector. (-90 degree rotation)
+        cp.v.rperp = function (vect) {
+            return v(vect.y, -vect.x);
+        };
+
+        // Returns the vector projection of v1 onto v2.
+        cp.v.project = function (v1, v2) {
+            return cp.v.mult(v2, cp.v.dot(v1, v2) / cp.v.dot(v2, v2));
+        };
+
+        // Rotates v1 by v2. (a vector of length 1 and angle)
+        cp.v.rotate = function (v1, v2) {
+            return v(v1.x * v2.x - v1.y * v2.y, v1.x * v2.y + v1.y * v2.x);
+        };
+
+        // Inverse of cp.v.rotate().
+        cp.v.unrotate = function (v1, v2) {
+            return v(v1.x * v2.x + v1.y * v2.y, v1.y * v2.x - v1.x * v2.y);
+        };
+
+        // Returns the squared length of v. Faster than cp.v.len() when you only need to compare lengths.
+        cp.v.lenSq = function (vect) {
+            return cp.v.dot(vect, vect);
+        };
+
+        // Returns the length of v.
+        cp.v.len = function (vect) {
+            return sqrt(cp.v.dot(vect, vect));
+        };
+
+        // Linearly interpolate between v1 and v2.
+        cp.v.lerp = function (v1, v2, t) {
+            return cp.v.add(cp.v.mult(v1, 1 - t), cp.v.mult(v2, t));
+        };
+
+        // Returns a normalized copy of v.
+        cp.v.normalize = function (vect) {
+            return cp.v.mult(vect, 1 / cp.v.len(vect));
+        };
+
+        cp.v.normalize_safe = function (vect) {
+            return (vect.x === 0 && vect.y === 0) ? cp.vzero : cp.v.normalize(vect);
+        };
+
+        // Clamp v to length len.
+        cp.v.clamp = function (vect, len) {
+            return (cp.v.dot(vect, vect) > len * len) ? cp.v.mult(cp.v.normalize(vect), len) : vect;
+        };
+
+        // Linearly interpolate between v1 towards v2 by distance d.
+        cp.v.lerpconst = function (v1, v2, d) {
+            return cp.v.add(v1, cp.v.clamp(cp.v.sub(v2, v1), d));
+        };
+
+        // Returns the distance between v1 and v2.
+        cp.v.dist = function (v1, v2) {
+            return cp.v.len(cp.v.sub(v1, v2));
+        };
+
+        // Returns the squared distance between v1 and v2. Faster than cp.v.dist() when you only need to compare distances.
+        cp.v.distSq = function (v1, v2) {
+            return cp.v.lenSq(cp.v.sub(v1, v2));
+        };
+
+        // Returns true if the distance between v1 and v2 is less than d.
+        cp.v.near = function (v1, v2, d) {
+            return cp.v.distSq(v1, v2) < d * d;
+        };
+
+        cp.v.forangle = function (a) {
+            return v(cos(a), sin(a));
+        };
+
+        cp.v.toangle = function (vect) {
+            return Math.atan2(vect.y, vect.x);
+        };
+
+        var v_from_v = function (v_in) {
+            return v(v_in.x, v_in.y);
+        };
+
+        var areaForPoly = function(verts) {
+            var area = 0;
+            for(var i=0, len=verts.length; i < len; i++){
+                area += v.cross(verts[i], verts[(i + 1) % len]);
+            }
+
+            return -area/2;
+        };
+        cp.areaForPoly = areaForPoly;
+
+        var momentForPoly = function(m, verts, offset) {
+            var sum1 = 0;
+            var sum2 = 0;
+            var len = verts.length;
+            for(var i=0; i<len; i++){
+                var v1 = v.add(verts[i], offset);
+                var v2 = v.add(verts[(i+1)%len], offset);
+
+                var a = v.cross(v2, v1);
+                var b = v.dot(v1, v1) + v.dot(v1, v2) + v.dot(v2, v2);
+
+                sum1 += a*b;
+                sum2 += a;
+            }
+
+            return m*sum1/(6*sum2);
+        };
+        cp.momentForPoly = momentForPoly;
+
+        var centroidForPoly = function(verts) {
+            var sum = 0;
+            var vsum = v(0,0);
+            for(var i=0, len=verts.length; i<len; i++){
+                var v1 = verts[i];
+                var v2 = verts[(i+1)%len];
+                var cross = v.cross(v1, v2);
+
+                sum += cross;
+                vsum = v.add(vsum, v.mult(v.add(v1, v2), cross));
+            }
+
+            return v.mult(vsum, 1/(3*sum));
+        };
+        cp.centroidForPoly = centroidForPoly;
+
+        var recenterPoly = function(verts) {
+            var centroid = centroidForPoly(verts);
+            for(var i=0; i<verts.length; i++){
+                verts[i] = v.sub(verts[i], centroid);
+            }
+        };
+        cp.recenterPoly = recenterPoly;
+
+        // Bounding Box
+
+        var BB = cp.BB = function (l, b, r, t) {
+            this.l = l;
+            this.b = b;
+            this.r = r;
+            this.t = t;
+        };
+
+        var bbNewForCircle = function (p, r) {
+            return new BB(p.x - r, p.y - r, p.x + r, p.y + r);
+        };
+
+        cp.bb = function(l, b, r, t) { return new BB(l, b, r, t); };
+
+        var bbIntersects = function (a, b) {
+            return (a.l <= b.r && b.l <= a.r && a.b <= b.t && b.b <= a.t);
+        };
+
+        var bbContainsBB = function (bb, other) {
+            return (bb.l <= other.l && bb.r >= other.r && bb.b <= other.b && bb.t >= other.t);
+        };
+
+        var bbContainsVect = function (bb, v) {
+            return (bb.l <= v.x && bb.r >= v.x && bb.b <= v.y && bb.t >= v.y);
+        };
+
+        var bbMerge = function(a, b){
+            return new BB(
+                min(a.l, b.l),
+                min(a.b, b.b),
+                max(a.r, b.r),
+                max(a.t, b.t)
+            );
+        };
+
+        var bbExpand = function(bb, v){
+            return new BB(
+                min(bb.l, v.x),
+                min(bb.b, v.y),
+                max(bb.r, v.x),
+                max(bb.t, v.y)
+            );
+        };
+        
+        // returns the area of the bounding box.
+        var bbArea = function(bb) {
+            return (bb.r - bb.l) * (bb.t - bb.b);
+        };
+
+        // returns the merged area of the two bounding boxes.
+        var bbMergedArea = function(a, b) {
+            return (max(a.r, b.r) - min(a.l, b.l)) * (max(a.t, b.t) - min(a.b, b.b));
+        };
+
+        var bbSegmentQuery = function(bb, a, b) {
+            var idx = 1/ (b.x - a.x);
+            var idy = 1/ (b.y - a.y);
+            var tx1 = (bb.l - a.x) * idx;
+            var tx2 = (bb.r - a.x) * idx;
+            var ty1 = (bb.b - a.y) * idy;
+            var ty2 = (bb.t - a.y) * idy;
+
+            var tmin = max(min(tx1, tx2), min(ty1, ty2));
+            var tmax = min(max(tx1, tx2), max(ty1, ty2));
+            
+            return (tmin <= tmax && tmin >= 0 && tmin <= 1);
+        };
+
+        var bbIntersectsSegment = function(bb, a, b) {
+            return (bbSegmentQuery(bb, a, b));
+        };
+
+        // TODO: remove it? not in chipmunk
+        cp.BB.prototype.intersects = function (b) {
+            return bbIntersects(this, b);
+        };
+
+        cp.BB.prototype.merge = function (b) {
+            this.l = min(this.l, b.l);
+            this.b = min(this.b, b.b);
+            this.r = max(this.r, b.r);
+            this.t = max(this.t, b.t);
+        };
+
+        var Body = cp.Body = function (m, i) {
+            this.p = v(0, 0); // position
+            this.v = v(0, 0); // velocity
+            this.f = v(0, 0); // force
+            this.w = 0;       // angular velocity
+            this.t = 0;       // torque
+            this.rot = v(0, 0);
+            this.v_limit = Infinity;
+            this.w_limit = Infinity;
+            this.v_bias = v(0,0);
+            this.w_bias = 0;
+
+            this.space = null;
+            this.shapeList = [];
+            this.arbiterList = null;
+            this.constraintList = null;
+
+            this.nodeRoot = null;
+            this.nodeNext = null;
+            this.nodeIdleTime = 0;
+
+            this.setMass(m);
+            this.setMoment(i);
+            this.setAngle(0);
+        };
+
+        var bodyNEW = function () {
+            return new Body(0, 0);
+        };
+
+        Body.prototype.setMass = function (m) {
+            this.m = m;
+            this.m_inv = (m === Infinity || m === 0) ? 0 : (1/m);
+        };
+
+        Body.prototype.setMoment = function (i) {
+            this.i = i;
+            this.i_inv = (i === Infinity || i === 0) ? 0 : (1/i);
+        };
+
+        Body.prototype.setAngle = function (a) {
+            this.a = a;
+            this.rot.x = cos(a);
+            this.rot.y = sin(a);
+        };
+
+        var bodyAddShape = function (body, shape) {
+            body.shapeList.push(shape);
+        };
+
+        var bodyRemoveShape = function(body, shape){
+            // This implementation is different to chipmunk.
+            // chipmunk use a link list to store shapes, but here we use array
+            for (var i = 0; i < body.shapeList.length; i++) {
+                if (body.shapeList[i] === shape) {
+                    body.shapeList.splice(i, 1);
+                    break;
+                }
+            }
+        };
+
+        var componentRoot = function (body) {
+            return (body ? body.nodeRoot : null);
+        };
+
+        var componentActivate = function (root) {
+            if (!root || !bodyIsSleeping(root)) return;
+            assert(root.nodeRoot, "Internal Error: componentActivate() called on a rogue body.");
+
+            var space = root.space;
+            var body = root;
+            while(body){
+                var next = body.nodeNext;
+
+                body.nodeIdleTime = 0;
+                body.nodeRoot = null;
+                body.nodeNext = null;
+                space.activateBody(body);
+
+                body = next;
+            }
+            
+            delete space.sleepingComponents[root.p.x];
+        };
+        
+        var componentAdd = function (root, body) {
+            body.nodeRoot = root;
+
+            if (body !== root) {
+                body.nodeNext = root.nodeNext;
+                root.nodeNext = body;
+            }
+        };
+        
+        var componentPreStep = function(body, dt) {
+            for(var i=0; i<body.shapeList.length; i++){
+                var shape = body.shapeList[i];
+
+                // update shape bb
+                shape.update(body.p, body.rot);
+            }
+        };
+
+        var componentActive = function(root, threshold) {
+            for(var body = root; body; body = body.nodeNext) {
+                if (body.nodeIdleTime < threshold) return true;
+            }
+            return false;
+        };
+
+        var bodyIsStatic = function (body) {
+            return (body.m === Infinity);
+        };
+
+        var bodyIsRogue = function(body) {
+            return (body.m > 0 && body.nodeRoot === null);
+        };
+        
+        var bodyIsSleeping = function(body) {
+            return (body.nodeRoot !== null);
+        };
+
+        Body.prototype.isSleeping = function() {
+            return bodyIsSleeping(this);
+        };
+
+        Body.prototype.isStatic = function() {
+            return bodyIsStatic(this);
+        };
+
+        Body.prototype.isRogue = function() {
+            return bodyIsRogue(this);
+        };
+
+        Body.prototype.activate = function(){
+            if (!this.isSleeping() && !this.isRogue()){
+                this.nodeIdleTime = 0;
+                componentActivate(componentRoot(this));
+            }
+        };
+        
+        Body.prototype.sleep = function(){
+            this.sleepWithGroup(null);
+        };
+        
+        Body.prototype.sleepWithGroup = function(group) {
+            assert(!this.isStatic() && !this.isRogue(), "Rogue and static bodies cannot be put to sleep.");
+            var space = this.space;
+            assert(space, "Cannot put a body to sleep that has not been added to a space.");
+            assert(!space.locked, "Bodies cannot be put to sleep during a query or a call to cpSpaceStep(). Put these calls into a post-step callback.");
+            assert(group === null || group.isSleeping(), "Cannot use a non-sleeping body as a group identifier.");
+
+            if(this.isSleeping()){
+                assert(componentRoot(this) === componentRoot(group), "Cannot join sleeping components that are already sleeping in different groups. Wake up the body first.");
+                return;
+            }
+
+            for(var i=0; i<this.shapeList.length; i++) {
+                this.shapeList[i].update(this.p, this.rot);
+            }
+            space.deactivateBody(this);
+
+            if(group){
+                var root = componentRoot(group);
+                componentAdd(root, this);
+                space.sleepingComponents[root.p.x] = root;
+            } else {
+                this.nodeRoot = this;
+                this.nodeNext = null;
+                this.nodeIdleTime = 0;
+
+                space.sleepingComponents[this.p.x] = this;
+            }
+            
+            delete space.activeShapes[this.shapeList[0].hashid];
+        };
+
+        Body.prototype.local2World = function (v) {
+            return cp.v.add(this.p, cp.v.rotate(v, this.rot));
+        };
+
+        Body.prototype.world2Local = function (v) {
+            return cp.v.unrotate(cp.v.sub(v, this.p), this.rot);
+        };
+
+        var bodyUpdateVelocity = function(body, j, crush, dt){
+            body.v = v.add(body.v, v.mult(j, body.m_inv));
+            body.w += body.i_inv*v.cross(crush, j);
+        };
+
+        var bodyUpdatePosition = function (body, dt) {
+            body.p = v.add(body.p, v.mult(v.lerp(body.v, body.v_bias, body.v_bias.x/body.v_bias.x), dt));
+            body.setAngle(body.a + (body.w + body.w_bias)*dt);
+            body.v_bias = v(0,0);
+            body.w_bias = 0;
+        };
+
+        var bodyResetForces = function (body) {
+            body.f = v(0, 0);
+            body.t = 0;
+        };
+        
+        Body.prototype.resetForces = function(){
+            bodyResetForces(this);
+        };
+
+        var bodyApplyForce = function(body, f, r){
+            body.f = v.add(body.f, f);
+            body.t += v.cross(r, f);
+        };
+        
+        Body.prototype.applyForce = function(f, r) {
+            bodyApplyForce(this, f, r);
+        };
+
+        var bodyApplyImpulse = function (body, j, r) {
+            componentActivate(body);
+            body.v = v.add(body.v, v.mult(j, body.m_inv));
+            body.w += body.i_inv * v.cross(r, j);
+        };
+        
+        Body.prototype.applyImpulse = function(j, r){
+            bodyApplyImpulse(this, j, r);
+        };
+        
+        var bodyKineticEnergy = function (body) {
+            var vsq = v.dot(body.v, body.v);
+            var wsq = body.w*body.w;
+            return (vsq ? vsq*body.m : 0) + (wsq ? wsq*body.i : 0);
+        };
+        
+        Body.prototype.kineticEnergy = function() {
+            return bodyKineticEnergy(this);
+        };
+
+        var createShape = function (body) {
+            var shape = {
+                body: body,
+                bb: new BB(0, 0, 0, 0),
+                sensor: false,
+                e: 0, // elasticity
+                u: 0, // friction
+                surface_v: v(0, 0), // surface velocity
+                collision_type: 0,
+                group: 0,
+                layers: -1, // CP_ALL_LAYERS,
+                space: null,
+                hashid: unique_id_counter++
+            };
+            return shape;
+        };
+        
+        var CircleShape = cp.CircleShape = function(body, radius, offset){
+            this.c = this.tc = offset;
+            this.r = radius;
+            this.shape = createShape(body);
+            this.shape.type = 'circle';
+        };
+
+        CircleShape.prototype.setElasticity = function(e){ this.shape.e = e; };
+        CircleShape.prototype.setFriction = function(u){ this.shape.u = u; };
+        
+        CircleShape.prototype.update = function(pos, rot){
+            this.tc = v.add(pos, v.rotate(this.c, rot));
+            this.shape.bb = bbNewForCircle(this.tc, this.r);
+        };
+        
+        var SegmentShape = cp.SegmentShape = function(body, a, b, r){
+            this.a = a;
+            this.b = b;
+            this.n = v.perp(v.normalize(v.sub(b, a)));
+            this.r = r;
+            this.shape = createShape(body);
+            this.shape.type = 'segment';
+        };
+        
+        SegmentShape.prototype.setElasticity = function(e){ this.shape.e = e; };
+        SegmentShape.prototype.setFriction = function(u){ this.shape.u = u; };
+        
+        SegmentShape.prototype.update = function(pos, rot){
+            this.ta = v.add(pos, v.rotate(this.a, rot));
+            this.tb = v.add(pos, v.rotate(this.b, rot));
+            this.tn = v.rotate(this.n, rot);
+            
+            var l,r,b,t;
+            if (this.ta.x < this.tb.x){
+                l = this.ta.x - this.r;
+                r = this.tb.x + this.r;
+            } else {
+                l = this.tb.x - this.r;
+                r = this.ta.x + this.r;
+            }
+            if (this.ta.y < this.tb.y){
+                b = this.ta.y - this.r;
+                t = this.tb.y + this.r;
+            } else {
+                b = this.tb.y - this.r;
+                t = this.ta.y + this.r;
+            }
+            this.shape.bb.l = l;
+            this.shape.bb.b = b;
+            this.shape.bb.r = r;
+            this.shape.bb.t = t;
+        };
+
+        var PolyShape = cp.PolyShape = function(body, verts, offset){
+            this.verts = verts;
+            this.offset = offset;
+            this.shape = createShape(body);
+            this.shape.type = 'poly';
+        };
+
+        PolyShape.prototype.setElasticity = function(e){ this.shape.e = e; };
+        PolyShape.prototype.setFriction = function(u){ this.shape.u = u; };
+        
+        PolyShape.prototype.update = function(pos, rot){
+            var bb = this.shape.bb;
+            bb.l = bb.b = Infinity;
+            bb.r = bb.t = -Infinity;
+            this.tVerts = [];
+            
+            for(var i=0; i<this.verts.length; i++){
+                var v_ = v.add(this.offset, this.verts[i]);
+                this.tVerts[i] = v.add(pos, v.rotate(v_, rot));
+                bb.l = min(bb.l, this.tVerts[i].x);
+                bb.b = min(bb.b, this.tVerts[i].y);
+                bb.r = max(bb.r, this.tVerts[i].x);
+                bb.t = max(bb.t, this.tVerts[i].y);
+            }
+        };
+
+        cp.momentForCircle = function (m, r1, r2, offset) {
+            return m * (0.5 * (r1 * r1 + r2 * r2) + v.lenSq(offset));
+        };
+
+        cp.momentForSegment = function (m, a, b) {
+            var offset = v.mult(v.add(a, b), 0.5);
+            return m * v.distSq(b, a) / 12 + m * v.lenSq(offset);
+        };
+
+        cp.momentForBox = function (m, width, height) {
+            return m * (width * width + height * height) / 12;
+        };
+        
+        // TODO: var BoxShape
+        cp.BoxShape = function(body, width, height) {
+            var verts = [
+                v( width/2,  height/2),
+                v( width/2, -height/2),
+                v(-width/2, -height/2),
+                v(-width/2,  height/2),
+            ];
+            return new PolyShape(body, verts, v(0,0));
+        };
+
+        var Shape = function () {
+            this.body = null;
+            this.sensor = false;
+            this.e = 0;
+            this.u = 0;
+            this.surface_v = v(0, 0);
+            this.collision_type = 0;
+            this.group = 0;
+            this.layers = -1;
+            this.space = null;
+            this.hashid = unique_id_counter++;
+        };
+
+        Shape.prototype.setElasticity = function (e) { this.e = e; };
+        Shape.prototype.setFriction = function (u) { this.u = u; };
+        Shape.prototype.setLayers = function(l) { this.layers = l; };
+        Shape.prototype.setSensor = function(s) { this.sensor = s; };
+        Shape.prototype.setCollisionType = function(t) { this.collision_type = t; };
+        Shape.prototype.getBody = function() { return this.body; };
+
+        // Extended Shape
+        //
+        var shapeExtended = function(shape) {
+            shape.cacheData = function(p, rot) {
+                var bb = this.update(p, rot);
+                return bb;
+            };
+
+            shape.pointQuery = function (p) {
+                var info = this.pointQuery(p);
+                if (info) {
+                    // TODO check
+                    info.shape = this;
+                }
+                return info;
+            };
+
+            return shape;
+        };
+
+        var circle2circle = function(circ1, circ2) {
+            var rsum = circ1.r + circ2.r;
+            var distsq = v.distSq(circ1.tc, circ2.tc);
+
+            if (distsq < rsum*rsum) {
+                var dist = sqrt(distsq);
+                var n = v.normalize_safe(v.sub(circ2.tc, circ1.tc));
+                var p = v.add(circ1.tc, v.mult(n, circ1.r));
+                return {
+                    "n": n,
+                    "p": p,
+                    "d": dist - rsum
+                };
+            }
+        };
+
+        var circle2segment = function(circle, segment) {
+        };
+
+        // TODO: not completed
+        var collide = function(s1, s2) {
+            var s1_type = s1.type, s2_type = s2.type;
+            if (s1_type === 'circle' && s2_type === 'circle') {
+                return circle2circle(s1, s2);
+            } else if (s1_type === 'circle' && s2_type === 'segment') {
+                return circle2segment(s1, s2);
+            }
+        };
+
+        // Arbiter
+        var Arbiter = function (a, b) {
+            this.a = a;
+            this.b = b;
+            this.e = a.e * b.e;
+            this.u = a.u * b.u;
+            this.surface_vr = v.sub(a.surface_v, b.surface_v);
+
+            this.contacts = null;
+            this.stamp = 0;
+            this.state = 'first coll';
+        };
+
+        Arbiter.prototype.getShapes = function() { return [this.a, this.b]; };
+
+        Arbiter.prototype.totalImpulse = function() {
+            var sum = v(0,0);
+            for(var i=0, count=this.contacts.length; i<count; i++){
+                var con = this.contacts[i];
+                sum = v.add(sum, v.mult(con.n, con.jnAcc));
+            }
+            return sum;
+        };
+        
+        Arbiter.prototype.totalImpulseWithFriction = function() {
+            var sum = v(0,0);
+            for(var i=0, count=this.contacts.length; i<count; i++){
+                var con = this.contacts[i];
+                sum = v.add(sum, v.rotate(con.n, v(con.jnAcc, con.jtAcc)));
+            }
+            return sum;
+        };
+
+        var arbiterUpdate = function(arb, new_contacts, a, b){
+            for(var i=0; i<new_contacts.length; i++){
+                // contact persistence
+                var new_c = new_contacts[i];
+                var old_c = null;
+                for(var j=0; j<arb.contacts.length; j++){
+                    var old = arb.contacts[j];
+                    if(v.dist(new_c.p, old.p) < 3){
+                        old_c = old;
+                    }
+                }
+
+                if(old_c){
+                    new_c.jnAcc = old_c.jnAcc;
+                    new_c.jtAcc = old_c.jtAcc;
+                }
+            }
+            arb.contacts = new_contacts;
+        };
+        
+        var arbiterPreStep = function(arb, dt){
+            var a = arb.a.body;
+            var b = arb.b.body;
+            var u = arb.u;
+
+            for(var i=0; i<arb.contacts.length; i++){
+                var con = arb.contacts[i];
+
+                con.r1 = v.sub(con.p, a.p);
+                con.r2 = v.sub(con.p, b.p);
+
+                // Calculate the mass normal
+                con.nMass = 1/k_scalar(a, b, con.r1, con.r2, con.n);
+
+                // Calculate the mass tangent
+                con.tMass = 1/k_scalar(a, b, con.r1, con.r2, v.perp(con.n));
+
+                // presolve the bias normal velocity
+                var vb1 = v.add(a.v_bias, v.mult(v.perp(con.r1), a.w_bias));
+                var vb2 = v.add(b.v_bias, v.mult(v.perp(con.r2), b.w_bias));
+                var v_bias = v.dot(v.sub(vb2, vb1), con.n);
+                con.bias = -0.1/dt * min(0, con.d+3) + max(0, v_bias);
+
+                // compute the restitution velocity
+                var v1 = v.add(a.v, v.mult(v.perp(con.r1), a.w));
+                var v2 = v.add(b.v, v.mult(v.perp(con.r2), b.w));
+                var vr = v.dot(v.sub(v2, v1), con.n);
+                con.bounce = (vr < -10)? (-arb.e*vr) : 0;
+            }
+        };
+
+        var arbiterApplyCachedImpulse = function (arb, dt_coef) {
+            var a = arb.a.body, b = arb.b.body;
+            for(var i=0; i<arb.contacts.length; i++){
+                var con = arb.contacts[i];
+                var j = v.rotate(con.n, v(con.jnAcc, con.jtAcc));
+                apply_impulses(a, b, con.r1, con.r2, v.mult(j, dt_coef));
+            }
+        };
+
+        var arbiterApplyImpulse = function (arb) {
+            var a = arb.a.body, b = arb.b.body;
+            var surface_vr = arb.surface_vr;
+            var u = arb.u;
+
+            for(var i=0; i<arb.contacts.length; i++){
+                var con = arb.contacts[i];
+                var n = con.n;
+                var r1 = con.r1, r2 = con.r2;
+
+                // calculate the relative velocity
+                var v1 = v.add(a.v, v.mult(v.perp(r1), a.w));
+                var v2 = v.add(b.v, v.mult(v.perp(r2), b.w));
+                var vr = v.sub(v2, v1);
+
+                // calculate the normal relative velocity
+                var vrn = v.dot(vr, n);
+
+                // calculate the tangent relative velocity
+                var vrt = v.dot(vr, v.perp(n)) + v.dot(surface_vr, n);
+
+                // calculate the normal impulse
+                var jn = -(con.bounce + vrn) * con.nMass;
+                var jnOld = con.jnAcc;
+                con.jnAcc = max(jnOld+jn, 0);
+                jn = con.jnAcc - jnOld;
+
+                // calculate the tangent impulse
+                var jtMax = u*con.jnAcc;
+                var jt = -vrt*con.tMass;
+                var jtOld = con.jtAcc;
+                con.jtAcc = clamp(jtOld+jt, -jtMax, jtMax);
+                jt = con.jtAcc - jtOld;
+
+                // apply the impulses
+                apply_impulses(a, b, r1, r2, v.rotate(n, v(jn, jt)));
+            }
+        };
+
+        var k_scalar_body = function(body, r, n){
+            var rcn = v.cross(r, n);
+            return body.m_inv + body.i_inv*rcn*rcn;
+        };
+        
+        var k_scalar = function(a, b, r1, r2, n){
+            var mass_sum = a.m_inv + b.m_inv;
+            var r1cn = v.cross(r1, n);
+            var r2cn = v.cross(r2, n);
+            var I_sum = a.i_inv*r1cn*r1cn + b.i_inv*r2cn*r2cn;
+            return mass_sum + I_sum;
+        };
+
+        var apply_impulses = function(a, b, r1, r2, j){
+            bodyApplyImpulse(a, v.neg(j), r1);
+            bodyApplyImpulse(b, j, r2);
+        };
+
+        var apply_bias_impulses = function (a, b, r1, r2, j) {
+            a.v_bias = v.sub(a.v_bias, v.mult(j, a.m_inv));
+            a.w_bias -= a.i_inv*v.cross(r1, j);
+            b.v_bias = v.add(b.v_bias, v.mult(j, b.m_inv));
+            b.w_bias += b.i_inv*v.cross(r2, j);
+        };
+
+        var clamp = function (value, min, max) {
+            if (value < min) {
+                return min;
+            } else if (value > max) {
+                return max;
+            } else {
+                return value;
+            }
+        };
+
+        var k_tensor = function (a, b, r1, r2) {
+            var m_sum = a.m_inv + b.m_inv;
+
+            // start with Identity*m_sum
+            var k11 = m_sum, k12 = 0;
+            var k21 = 0, k22 = m_sum;
+
+            // add the influence from r1
+            var a_i_inv = a.i_inv;
+            var r1xsq = r1.x * r1.x * a_i_inv;
+            var r1ysq = r1.y * r1.y * a_i_inv;
+            var r1xy = r1.x * r1.y * a_i_inv;
+            k11 += r1ysq;
+            k12 -= r1xy;
+            k21 -= r1xy;
+            k22 += r1xsq;
+
+            // add the influence from r2
+            var b_i_inv = b.i_inv;
+            var r2xsq = r2.x * r2.x * b_i_inv;
+            var r2ysq = r2.y * r2.y * b_i_inv;
+            var r2xy = r2.x * r2.y * b_i_inv;
+            k11 += r2ysq;
+            k12 -= r2xy;
+            k21 -= r2xy;
+            k22 += r2xsq;
+            
+            // invert
+            var determinant = k11 * k22 - k12 * k21;
+            assert(determinant !== 0, "Unsolvable collision.");
+            
+            var det_inv = 1/determinant;
+            return [
+                v(k22*det_inv, -k12*det_inv),
+                v(-k21*det_inv, k11*det_inv)
+            ];
+        };
+
+        // TODO: not completed
+        var Contact = function(p, n, dist){
+            this.p = p;
+            this.n = n;
+            this.dist = dist;
+
+            this.jnAcc = 0;
+            this.jtAcc = 0;
+            this.jBias = 0;
+        };
+
+        var contactNew = function(p, n, d){
+            return {
+                "p": p,
+                "n": n,
+                "d": d,
+                "jnAcc":0,
+                "jtAcc":0
+            };
+        };
+
+        var Collision = {};
+
+        var circleCircle = function (c1, c2) {
+            var rsum = c1.r + c2.r;
+            var distsq = v.distSq(c1.tc, c2.tc);
+            if (distsq < rsum*rsum) {
+                var dist = sqrt(distsq);
+                var n = (dist) ? v.mult(v.sub(c2.tc, c1.tc), 1/dist) : v(1, 0);
+                return [contactNew(v.add(c1.tc, v.mult(n, c1.r)), n, dist - rsum)];
+            } else {
+                return [];
+            }
+        };
+        Collision.circleCircle = circleCircle;
+
+        var circleSegment = function (circle, seg) {
+            var seg_a = seg.ta;
+            var seg_b = seg.tb;
+            var center = circle.tc;
+
+            var seg_delta = v.sub(seg_b, seg_a);
+            var closest_t = v.dot(seg_delta, v.sub(center, seg_a)) / v.lenSq(seg_delta);
+            var closest_t = clamp(closest_t, 0, 1);
+            var closest = v.add(seg_a, v.mult(seg_delta, closest_t));
+
+            var rsum = circle.r + seg.r;
+            var dist_sq = v.distSq(center, closest);
+            if (dist_sq < rsum*rsum) {
+                var dist = sqrt(dist_sq);
+                var n = (dist) ? v.mult(v.sub(center, closest), 1/dist) : seg.tn;
+                return [contactNew(v.add(closest, v.mult(n, seg.r)), n, dist - rsum)];
+            } else {
+                return [];
+            }
+        };
+        Collision.circleSegment = circleSegment;
+        
+        var segmentSegment = function(seg1, seg2) { return []; };
+        Collision.segmentSegment = segmentSegment;
+        
+        var polyCircle = function(poly, circle){
+            var contacts = [];
+            var c = circle.tc;
+            var r = circle.r;
+            var tverts = poly.tVerts;
+            var num_verts = tverts.length;
+            var min_sep = Infinity;
+            var min_n;
+            var min_dist;
+            var min_p;
+
+            for(var i=0; i<num_verts; i++){
+                var a = tverts[i];
+                var b = tverts[(i+1)%num_verts];
+                var n = v.normalize(v.perp(v.sub(b,a)));
+                var dist = v.dot(v.sub(c, a), n);
+                if(dist > r) return [];
+
+                var sep = dist - r;
+                if(sep < min_sep) {
+                    min_sep = sep;
+                    min_n = n;
+                }
+            }
+            
+            if (min_sep > 0) {
+            } else {
+                return [contactNew(v.add(c, v.mult(min_n, r)), v.neg(min_n), min_sep)];
+            }
+            return [];
+        };
+        Collision.polyCircle = polyCircle;
+
+        var polySegment = function(poly, seg) { return []; };
+        Collision.polySegment = polySegment;
+        
+        var polyPoly = function(p1, p2) {
+            // TODO: to be done
+            return [];
+        };
+        Collision.polyPoly = polyPoly;
+
+        var lookup = [
+            [Collision.circleCircle, Collision.circleSegment, Collision.circlePoly],
+            [null, Collision.segmentSegment, Collision.segmentPoly],
+            [null, null, Collision.polyPoly]
+        ];
+
+        var collideShapes = function (s1, s2) {
+            var c1 = s1.collision_type;
+            var c2 = s2.collision_type;
+
+            if (c1 > c2) {
+                var tmp = s1; s1 = s2; s2 = tmp;
+                tmp = c1; c1 = c2; c2 = tmp;
+            }
+            
+            var func = lookup[c1][c2];
+            if (func) {
+                return func(s1, s2);
+            } else {
+                return [];
+            }
+        };
+
+        var defaultCollisionHandler = {
+            begin: function(a, b, space){ return true; },
+            preSolve: function(a, b, space){ return true; },
+            postSolve: function(a, b, space){},
+            separate: function(a, b, space){}
+        };
+
+        // Space
+        var Space = cp.Space = function () {
+            this.stamp = 0;
+            this.curr_dt = 0;
+
+            this.bodies = [];
+            this.staticShapes = [];
+            this.activeShapes = [];
+
+            this.arbiters = [];
+            this.contactSet = {};
+            
+            this.constraints = [];
+
+            this.locked = 0;
+
+            this.collisionHandlers = {};
+            this.defaultHandler = defaultCollisionHandler;
+            
+            this.postStepCallbacks = [];
+            
+            this.staticBody = new Body(Infinity, Infinity);
+
+            this.sleepingComponents = [];
+            this.sleepTimeThreshold = Infinity;
+            this.idleSpeedThreshold = 0;
+            this.sleepEnable = false;
+            this.arbiters_from_body = {};
+        };
+        
+        Space.prototype.getCurrentTimeStep = function() { return this.curr_dt; };
+        Space.prototype.setIterations = function(iter) { this.iterations = iter; };
+
+        var spaceAddBody = function (space, body) {
+            assert(body.space === null, "body's space is not null");
+            space.bodies.push(body);
+            body.space = space;
+        };
+
+        Space.prototype.addBody = function (body) {
+            spaceAddBody(this, body);
+        };
+        
+        var spaceAddShape = function (space, shape) {
+            var body = shape.body;
+            if (body.isStatic()) {
+                // static shape
+                assert(shape.space === null, "shape's space is not null for static shape");
+                space.staticShapes.push(shape);
+            } else {
+                assert(shape.space === null, "shape's space is not null for non-static shape");
+                bodyAddShape(space, body);
+                space.activeShapes.push(shape);
+            }
+            shape.space = space;
+        };
+
+        var spaceAddShapes = function(space, shapes) {
+            for(var i=0; i<shapes.length; i++){
+                spaceAddShape(space, shapes[i]);
+            }
+        };
+        Space.prototype.addShapes = function(shapes){
+            spaceAddShapes(this, shapes);
+        };
+        
+        Space.prototype.addShape = function (shape) {
+            spaceAddShape(this, shape);
+        };
+        
+        var spaceAddConstraint = function (space, constraint) {
+            assert(constraint.space === null, "constraint's space is not null");
+            var a = constraint.a, b = constraint.b;
+            bodyAddShape(space, a);
+            bodyAddShape(space, b);
+
+            space.constraints.push(constraint);
+
+            constraint.space = space;
+        };
+
+        Space.prototype.addConstraint = function (constraint) {
+            spaceAddConstraint(this, constraint);
+        };
+        
+        var spaceLookupHandler = function(space, a, b){
+            var key = a + " " + b;
+            return space.collisionHandlers[key] || space.defaultHandler;
+        };
+
+        Space.prototype.addCollisionHandler = function (a, b, begin, preSolve, postSolve, separate) {
+            var key = a + " " + b;
+            this.collisionHandlers[key] = {
+                "begin": begin || defaultCollisionHandler.begin,
+                "preSolve": preSolve || defaultCollisionHandler.preSolve,
+                "postSolve": postSolve || defaultCollisionHandler.postSolve,
+                "separate": separate || defaultCollisionHandler.separate
+            };
+        };
+
+        var spaceRemoveBody = function (space, body) {
+            // TODO: assertions
+            for (var i = 0; i < space.bodies.length; i++) {
+                if (space.bodies[i] === body) {
+                    space.bodies.splice(i, 1);
+                    break;
+                }
+            }
+            body.space = null;
+        };
+
+        Space.prototype.removeBody = function(body) {
+            spaceRemoveBody(this, body);
+        };
+
+        var spaceRemoveShape = function(space, shape){
+            var body = shape.body;
+            if(body.isStatic()){
+                for(var i=0; i<space.staticShapes.length; i++) {
+                    if (space.staticShapes[i] === shape) {
+                        space.staticShapes.splice(i, 1);
+                        break;
+                    }
+                }
+            } else {
+                bodyRemoveShape(body, shape);
+
+                for(var i=0; i<space.activeShapes.length; i++){
+                    if(space.activeShapes[i] === shape){
+                        space.activeShapes.splice(i, 1);
+                        break;
+                    }
+                }
+                
+                if (body.shapeList.length === 0){
+                    spaceRemoveBody(space, body);
+                }
+            }
+            shape.space = null;
+        };
+        
+        Space.prototype.removeShape = function(shape){
+            spaceRemoveShape(this, shape);
+        };
+        
+        var spaceRemoveConstraint = function (space, constraint){
+            for(var i=0; i<space.constraints.length; i++) {
+                if (space.constraints[i] === constraint) {
+                    space.constraints.splice(i, 1);
+                    break;
+                }
+            }
+            var a = constraint.a, b = constraint.b;
+            if(a.constraintList.length === 0 && a.shapeList.length === 0) spaceRemoveBody(space, a);
+            if(b.constraintList.length === 0 && b.shapeList.length === 0) spaceRemoveBody(space, b);
+            
+            constraint.space = null;
+        };
+        
+        Space.prototype.removeConstraint = function(constraint){
+            spaceRemoveConstraint(this, constraint);
+        };
+        
+        var spaceFilterArbiters = function(space, body, filter){
+            for(var hash in space.contactSet) {
+                var arb = space.contactSet[hash];
+                if((body === arb.a.body && filter(arb.b)) || (body === arb.b.body && filter(arb.a))) {
+                    if (arb.state !== 'cached') {
+                        arb.state = 'ignore';
+                    }
+                }
+            }
+        };
+
+        var spaceProcessComponents = function(space, dt){
+            var sleep = (space.sleepTimeThreshold !== Infinity);
+            var bodies = space.bodies;
+
+            if (sleep) {
+                var dv = space.idleSpeedThreshold;
+                var dvsq = (dv ? dv*dv : v.lenSq(space.gravity)*dt*dt);
+                
+                for(var i=0; i<bodies.length; i++){
+                    var body = bodies[i];
+                    
+                    // TODO should make this a proper method of cpBody.
+                    var keThreshold = (dvsq ? body.m*dvsq : 0);
+                    body.nodeIdleTime = (body.kineticEnergy() > keThreshold) ? 0 : body.nodeIdleTime+dt;
+                }
+            }
+
+            // TODO separate this out
+            var arbiters = space.arbiters;
+            for(var i=0, count=arbiters.length; i<count; i++){
+                var arb = arbiters[i];
+                var a = arb.a.body, b = arb.b.body;
+
+                if (sleep) {
+                    if((b.isRogue() && !b.isStatic()) || a.isSleeping()) a.activate();
+                    if((a.isRogue() && !a.isStatic()) || b.isSleeping()) b.activate();
+                }
+
+                if(!a.isSleeping() && !b.isSleeping()){
+                    if (arb.state !== 'ignore' && arb.handler.preSolve(arb, space)) {
+                        arb.preStep(dt);
+                    } else {
+                        arb.contacts = null;
+                        // TODO memory management
+                    }
+                }
+            }
+
+            if(sleep) {
+                var constraints = space.constraints;
+                for(i=0; i<constraints.length; i++){
+                    var constraint = constraints[i];
+                    var a = constraint.a, b = constraint.b;
+                    
+                    if(b.isRogue() && !b.isStatic()) a.activate();
+                    if(a.isRogue() && !a.isStatic()) b.activate();
+                }
+
+                for(i=0; i<bodies.length; i++){
+                    var body = bodies[i];
+                    if(componentRoot(body) !== null){
+                        if (!componentActive(body, space.sleepTimeThreshold)) {
+                            space.bodies_to_sleep.push(body);
+                        } else if (!body.isSleeping()) {
+                            componentActivate(body);
+                        }
+                    }
+                }
+            }
+        };
+
+        var spaceLock = function(space) { space.locked++; };
+        var spaceUnlock = function(space, run_post_step) {
+            space.locked--;
+            assert(space.locked >= 0, "space lock underflow");
+            if (space.locked === 0 && run_post_step) {
+                var callbacks = space.postStepCallbacks;
+                for (var i=0; i<callbacks.length; i++) {
+                    callbacks[i]();
+                }
+                callbacks.length = 0;
+            }
+        };
+
+        Space.prototype.step = function (dt) {
+            if (dt === 0) return;
+
+            this.stamp++;
+            var prev_dt = this.curr_dt;
+            this.curr_dt = dt;
+            
+            var bodies = this.bodies;
+            var constraints = this.constraints;
+            var arbiters = this.arbiters;
+            
+            // reset and pre-step
+            for (var i = 0; i < arbiters.length; i++) {
+                arbiters[i].state = 'normal';
+            }
+
+            // update velocity
+            for (i=0; i<bodies.length; i++) {
+                var body = bodies[i];
+                body.v.x = body.v.x + (body.f.x*body.m_inv + this.gravity.x)*dt;
+                body.v.y = body.v.y + (body.f.y*body.m_inv + this.gravity.y)*dt;
+                body.w = body.w + body.t*body.i_inv*dt;
+                body.v.x = clamp(body.v.x, -body.v_limit, body.v_limit);
+                body.v.y = clamp(body.v.y, -body.v_limit, body.v_limit);
+                body.w = clamp(body.w, -body.w_limit, body.w_limit);
+            }
+            
+            var dt_coef = (prev_dt === 0) ? 0 : dt/prev_dt;
+            for(i=0; i<arbiters.length; i++){
+                arbiters[i].applyCachedImpulse(dt_coef);
+            }
+            
+            for(i=0; i<constraints.length; i++){
+                constraints[i].applyCachedImpulse(dt_coef);
+            }
+
+            // find collisions
+            this.broadphase();
+
+            // pre-solve collisions
+            spaceProcessComponents(this, dt);
+
+            // apply impulses
+            for(var j=0; j<this.iterations; j++){
+                for(i=0; i<arbiters.length; i++){
+                    arbiters[i].applyImpulse();
+                }
+                for(i=0; i<constraints.length; i++){
+                    constraints[i].applyImpulse();
+                }
+            }
+
+            // update position
+            for (i=0; i<bodies.length; i++) {
+                bodies[i].updatePosition(dt);
+            }
+
+            // post solve
+            for(i=0; i<arbiters.length; i++) {
+                var arb = arbiters[i];
+                arb.handler.postSolve(arb, this);
+            }
+
+            // remove arbiter
+            for(i=0; i<arbiters.length; i++) {
+                if (arbiters[i].state === 'ignore') {
+                    arbiters.splice(i, 1);
+                }
+            }
+
+            // update position
+            for (i=0; i<bodies.length; i++) {
+                bodies[i].resetForces();
+            }
+
+        };
+        
+        Space.prototype.broadphase = function(){
+            // Naive broadphase
+            var shapes = this.activeShapes;
+            for(var i=0; i<shapes.length; i++){
+                var s1 = shapes[i];
+                componentPreStep(s1.body, this.curr_dt);
+                
+                for(var j=i+1; j<shapes.length; j++){
+                    var s2 = shapes[j];
+                    this.checkCollision(s1, s2);
+                }
+                
+                for(j=0; j<this.staticShapes.length; j++){
+                    s2 = this.staticShapes[j];
+                    this.checkCollision(s1, s2);
+                }
+            }
+        };
+        
+        Space.prototype.checkCollision = function (s1, s2) {
+            if (
+                (s1.group && s1.group === s2.group) ||
+                !(s1.layers & s2.layers) ||
+                s1.body === s2.body
+            ) {
+                return;
+            }
+
+            if(bbIntersects(s1.bb, s2.bb)){
+                var contacts = collideShapes(s1, s2);
+                if (contacts.length > 0) {
+                    var arbHash = s1.hashid + " " + s2.hashid;
+                    var arb = this.contactSet[arbHash];
+                    if (!arb) {
+                        arb = new Arbiter(s1, s2);
+                        this.contactSet[arbHash] = arb;
+                        this.arbiters.push(arb);
+                    }
+                    arb.contacts = contacts;
+                }
+            }
+        };
+
+    }());
+
+    </script>
 </head>
 <body>
     <h1>AI Cannon Game (Chipmunk.js Physics)</h1>
