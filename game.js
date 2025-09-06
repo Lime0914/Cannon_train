@@ -11,13 +11,12 @@ const SCREEN_HEIGHT = 600;
 canvas.width = SCREEN_WIDTH;
 canvas.height = SCREEN_HEIGHT;
 
-// Chipmunk.js 초기화 (cp는 Chipmunk의 네임스페이스)
-const cp = this.cp; 
-const space = new cp.Space();
-// Python과 동일한 중력 값 사용
+// [핵심 수정] const cp = this.cp; 라인을 삭제합니다.
+// chipmunk.js를 로드하면 'cp' 객체는 전역으로 사용할 수 있습니다.
+const space = new cp.Space(); 
 space.gravity = cp.v(0, -900); 
 
-// 게임 상수 (Python과 거의 동일)
+// 게임 상수
 const BALL_COLLISION_TYPE = 1;
 const SENSOR_COLLISION_TYPE = 2;
 const GROUND_COLLISION_TYPE = 3;
@@ -47,7 +46,6 @@ let ball = { body: null, shape: null };
 let windForce = 0.0;
 let ballInHole = false;
 
-// 지면 생성 (Pymunk 방식과 매우 유사)
 const groundBody = space.staticBody;
 const groundShape = new cp.SegmentShape(groundBody, cp.v(0, GROUND_THICKNESS), cp.v(SCREEN_WIDTH, GROUND_THICKNESS), 5);
 groundShape.setElasticity(0.6);
@@ -55,10 +53,9 @@ groundShape.setFriction(1.2);
 groundShape.collision_type = GROUND_COLLISION_TYPE;
 space.addShape(groundShape);
 
-// 충돌 핸들러 설정
 space.addCollisionHandler(BALL_COLLISION_TYPE, SENSOR_COLLISION_TYPE, () => {
     ballInHole = true;
-    return true; // 계속 충돌 처리
+    return true;
 }, null, null, null);
 
 
@@ -76,7 +73,6 @@ function resetLevel() {
     windForce = (Math.random() * 2 - 1) * MAX_WIND_FORCE;
     uiOverlay.textContent = `Wind: ${(windForce / MAX_WIND_FORCE * 10).toFixed(1)}`;
     
-    // 목표 지점 생성 (Pymunk API와 거의 동일)
     const holeWidth = 40, holeHeight = 40, thickness = 4;
     const hw = holeWidth / 2;
     const targetBody = space.staticBody;
@@ -175,7 +171,7 @@ async function runInferenceAndFire() {
     
     angle = Math.max(cannon.minAngle, Math.min(cannon.maxAngle, angle));
 
-    cannon.angle = angle; // JS 좌표계 변환 불필요
+    cannon.angle = angle;
     cannon.power = power;
     fireCannon();
 }
@@ -202,7 +198,6 @@ function fireCannon() {
     ball.body = body;
     ball.shape = shape;
 
-    // Python과 동일한 Impulse 적용 방식
     const impulse = cp.v.mult(cp.v.forangle(angle), power);
     body.applyImpulse(impulse, cp.v(0,0));
     
@@ -215,6 +210,7 @@ function fireCannon() {
 // =====================================================================
 let lastTime = 0;
 function gameLoop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
     const dt = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
 
@@ -227,12 +223,10 @@ function gameLoop(timestamp) {
         runInferenceAndFire();
     }
     
-    // 물리 시뮬레이션 진행
     if (gameState === 'FIRING') {
         space.gravity = cp.v(windForce, -900);
-        space.step(1/60); // 고정된 타임스텝 사용
+        space.step(1/60); 
 
-        // 종료 조건 확인
         if (ball.body) {
             const pos = ball.body.p;
             const velMag = cp.v.len(ball.body.v);
