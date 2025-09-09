@@ -1,8 +1,8 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // --- Matter.js Modules ---
-    const { Engine, Render, Runner, World, Bodies, Body, Events, Vector, Composite } = Matter;
+    // --- Matter.js 모듈 ---
+    const { Engine, World, Bodies, Body, Events, Vector, Composite } = Matter;
 
-    // --- Constants from Python ---
+    // --- 상수 ---
     const SCREEN_WIDTH = 800;
     const SCREEN_HEIGHT = 600;
     const GROUND_THICKNESS = 50;
@@ -11,21 +11,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const CANNON_POS = { x: 100, y: SCREEN_HEIGHT - GROUND_THICKNESS - 20 };
     const HOLE_WIDTH = 40;
     const HOLE_HEIGHT = 40;
-    const MIN_POWER = 100;
-    const MAX_POWER = 800;
+    const POWER_SCALE = 0.005;
 
-    // --- Physics Scaling ---
-    // Matter.js works best with smaller values, so we scale power down
-    const POWER_SCALE = 0.005; 
-    
-    // --- DOM Elements ---
+    // --- DOM 요소 ---
     const canvas = document.getElementById('game-canvas');
     canvas.width = SCREEN_WIDTH;
     canvas.height = SCREEN_HEIGHT;
     const ctx = canvas.getContext('2d');
     const statusMessage = document.getElementById('status-message');
 
-    // Sliders and Value Displays
     const sliders = {
         target: document.getElementById('target-slider'),
         wind: document.getElementById('wind-slider'),
@@ -44,45 +38,41 @@ document.addEventListener('DOMContentLoaded', () => {
         reset: document.getElementById('reset-button'),
     };
     
-    // --- Game State ---
+    // --- 게임 상태 변수 ---
     let engine, world;
     let ground, ball, targetHole;
     let cannonAngle = 45 * (Math.PI / 180);
     let cannonPower = 450;
     let isFiring = false;
+    let ortSession = null;
 
-    // --- Game Initialization ---
+    // --- 게임 초기화 ---
     function init() {
         engine = Engine.create();
         world = engine.world;
-        engine.gravity.y = 1; // Standard gravity, adjust force via wind
-        engine.gravity.scale = 0.0018; // Corresponds to ~900 in pymunk
+        engine.gravity.y = 1;
+        engine.gravity.scale = 0.0018;
 
-        // Create ground
         ground = Bodies.rectangle(SCREEN_WIDTH / 2, SCREEN_HEIGHT - GROUND_THICKNESS / 2, SCREEN_WIDTH, GROUND_THICKNESS, { 
             isStatic: true,
             friction: 1.2,
             restitution: 0.6,
-            render: { fillStyle: '#228B22' }
         });
 
         World.add(world, ground);
         createLevel();
         setupEventListeners();
         
-        // Start the rendering loop
         requestAnimationFrame(gameLoop);
+        loadOnnxModel(); 
     }
     
-    // --- Level Creation ---
+    // --- 레벨 생성 ---
     function createLevel() {
-        // Clear previous ball and target
         if (ball) Composite.remove(world, ball);
         if (targetHole) Composite.remove(world, targetHole);
 
         const targetX = parseFloat(sliders.target.value);
-        
-        // Create the target hole
         const wallThickness = 4;
         const holeY = SCREEN_HEIGHT - GROUND_THICKNESS - (HOLE_HEIGHT / 2);
         
@@ -94,31 +84,26 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const sensor = Bodies.rectangle(targetX, holeY, HOLE_WIDTH - wallThickness, 1, {
             isStatic: true,
-            isSensor: true, // Doesn't collide physically, just detects
+            isSensor: true,
             label: 'hole_sensor'
         });
 
-        targetHole = Body.create({ parts: [...holeParts, sensor], isStatic: true });
+        targetHole = Body.create({ parts: [...holeParts, sensor], isStatic: true, label: 'targetHole' });
         
         World.add(world, targetHole);
         isFiring = false;
         
-        // Update wind force
-        const windForce = parseFloat(sliders.wind.value) / 100000; // Scale for Matter.js
-        world.gravity.x = windForce;
+        world.gravity.x = parseFloat(sliders.wind.value) / 100000;
     }
     
-    // --- Event Listeners ---
+    // --- 이벤트 리스너 설정 ---
     function setupEventListeners() {
-        // Slider listeners
         for (const key in sliders) {
             sliders[key].addEventListener('input', handleSliderChange);
         }
 
-        // Button Listeners
         buttons.fire.addEventListener('click', fireCannon);
         buttons.reset.addEventListener('click', () => {
-             // Randomize and reset
              sliders.target.value = 400 + Math.random() * 300;
              sliders.wind.value = -200 + Math.random() * 400;
              handleSliderChange({ target: sliders.target });
@@ -128,7 +113,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         buttons.aiSolve.addEventListener('click', aiSolve);
 
-        // Physics collision listener
         Events.on(engine, 'collisionStart', (event) => {
             if (!isFiring) return;
             const pairs = event.pairs;
@@ -142,6 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // --- 슬라이더 변경 핸들러 ---
     function handleSliderChange(e) {
         const slider = e.target;
         if (slider === sliders.angle) {
@@ -159,17 +144,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Game Actions ---
+    // --- 게임 액션 ---
     function fireCannon() {
         if (isFiring) return;
-
         isFiring = true;
         if (ball) Composite.remove(world, ball);
 
         const barrelLength = 40;
         const startPos = {
             x: CANNON_POS.x + barrelLength * Math.cos(cannonAngle),
-            y: CANNON_POS.y - barrelLength * Math.sin(cannonAngle) // Canvas Y is inverted
+            y: CANNON_POS.y - barrelLength * Math.sin(cannonAngle)
         };
 
         ball = Bodies.circle(startPos.x, startPos.y, BALL_RADIUS, {
@@ -181,17 +165,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const force = Vector.create(
             Math.cos(cannonAngle) * cannonPower * POWER_SCALE,
-            -Math.sin(cannonAngle) * cannonPower * POWER_SCALE // Y is up
+            -Math.sin(cannonAngle) * cannonPower * POWER_SCALE
         );
         
         Body.applyForce(ball, ball.position, force);
         World.add(world, ball);
         
-        // Timeout for miss
         setTimeout(() => {
-            if (isFiring) { // If still firing after 10s, it's a miss
+            if (isFiring) {
                 isFiring = false;
-                showMessage("Missed!", "#e27d60");
+                showMessage("실패!", "#e27d60");
             }
         }, 10000);
     }
@@ -199,8 +182,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function winCondition() {
         if (!isFiring) return;
         isFiring = false;
-        showMessage("Success!", "#50e3c2");
-        Composite.remove(world, ball); // Remove ball
+        showMessage("성공!", "#50e3c2");
+        Composite.remove(world, ball);
     }
     
     function showMessage(msg, color = '#fff') {
@@ -209,142 +192,104 @@ document.addEventListener('DOMContentLoaded', () => {
         statusMessage.style.opacity = msg === "" ? 0 : 1;
     }
 
-    // --- AI Solver ---
-    function aiSolve() {
-        showMessage("AI is thinking...");
-        // Use a timeout to allow the message to render before blocking the thread
-        setTimeout(() => {
-            const solution = findOptimalShot();
-            if (solution) {
-                sliders.angle.value = solution.angleDeg;
-                sliders.power.value = solution.power;
-                handleSliderChange({ target: sliders.angle });
-                handleSliderChange({ target: sliders.power });
-                showMessage("");
-                fireCannon();
-            } else {
-                showMessage("AI couldn't find a solution.", "#e27d60");
-            }
-        }, 50);
+    // --- ONNX AI 로더 및 솔버 ---
+    async function loadOnnxModel() {
+        try {
+            showMessage("AI 모델을 로딩 중입니다...");
+            ortSession = await ort.InferenceSession.create('./model.onnx');
+            showMessage("AI 모델 로딩 완료!", "#50e3c2");
+            setTimeout(() => showMessage(""), 2000);
+        } catch (e) {
+            console.error(`ONNX 모델 로딩 실패: ${e}`);
+            showMessage("AI 모델 로딩 실패!", "#e27d60");
+        }
     }
 
-    function findOptimalShot() {
-        const targetX = parseFloat(sliders.target.value);
-        const windX = world.gravity.x;
-        const gravityY = engine.gravity.y * engine.gravity.scale;
-        
-        let bestShot = { minDistance: Infinity };
-
-        // Iteratively test different angles to find the best one
-        for (let angleDeg = 10; angleDeg <= 85; angleDeg += 1) {
-            const angleRad = angleDeg * Math.PI / 180;
-            
-            // This is a simplified physics calculation to estimate the required power
-            // A more robust method would simulate steps, but this is faster for a demo
-            const cosA = Math.cos(angleRad);
-            const sinA = Math.sin(angleRad);
-            
-            // Simplified ballistic trajectory calculation to get close
-            let bestPowerForAngle = null;
-            let minPowerDist = Infinity;
-
-            for (let power = MIN_POWER; power <= MAX_POWER; power += 10) {
-                 const velocity = power * POWER_SCALE;
-                 const vx = cosA * velocity;
-                 const vy = -sinA * velocity;
-
-                 // Estimate time to reach target X
-                 // Simplified: t = dx / (vx + 0.5 * ax * t)  => this is complex.
-                 // Let's do a quick simulation instead.
-                 let simPos = { ...CANNON_POS };
-                 let simVel = { x: vx, y: vy };
-                 let landedPos = null;
-                 
-                 for (let t = 0; t < 800; t++) { // Max 800 steps
-                     simPos.x += simVel.x;
-                     simPos.y += simVel.y;
-                     simVel.x += windX;
-                     simVel.y += gravityY;
-                     
-                     if (simPos.y > SCREEN_HEIGHT - GROUND_THICKNESS) {
-                        landedPos = simPos;
-                        break;
-                     }
-                 }
-                 if(landedPos) {
-                    const dist = Math.abs(landedPos.x - targetX);
-                    if (dist < minPowerDist) {
-                        minPowerDist = dist;
-                        bestPowerForAngle = power;
-                    }
-                 }
-            }
-            
-            if (minPowerDist < bestShot.minDistance) {
-                bestShot = { 
-                    minDistance: minPowerDist, 
-                    angleDeg: angleDeg, 
-                    power: bestPowerForAngle 
-                };
-            }
+    async function aiSolve() {
+        if (!ortSession) {
+            showMessage("AI 모델이 아직 로딩되지 않았습니다.", "#e27d60");
+            return;
         }
+        if (isFiring) return;
+
+        showMessage("AI가 계산 중입니다...");
+
+        const cannon = { min_angle: 0, max_angle: Math.PI / 2, min_power: 100, max_power: 800 };
+        const MAX_WIND_FORCE = 200.0;
         
-        if (bestShot.minDistance < 50) { // Only accept if it's a reasonably close shot
-            return bestShot;
-        }
-        return null;
+        const norm_angle = (cannonAngle - cannon.min_angle) / (cannon.max_angle - cannon.min_angle) * 2 - 1;
+        const norm_power = (cannonPower - cannon.min_power) / (cannon.max_power - cannon.min_power) * 2 - 1;
+        const norm_target_x = (parseFloat(sliders.target.value) / SCREEN_WIDTH) * 2 - 1;
+        const norm_target_y = ((SCREEN_HEIGHT - GROUND_THICKNESS) / SCREEN_HEIGHT) * 2 - 1;
+        const norm_wind = parseFloat(sliders.wind.value) / MAX_WIND_FORCE;
+        
+        const input = new ort.Tensor('float32', [norm_angle, norm_power, norm_target_x, norm_target_y, norm_wind], [1, 5]);
+        const feeds = { 'obs': input };
+
+        const results = await ortSession.run(feeds);
+        const action = results.actions.data;
+        
+        const predicted_norm_angle = action[0];
+        const predicted_norm_power = action[1];
+        
+        let finalAngle = (predicted_norm_angle + 1) / 2 * (cannon.max_angle - cannon.min_angle) + cannon.min_angle;
+        let finalPower = (predicted_norm_power + 1) / 2 * (cannon.max_power - cannon.min_power) + cannon.min_power;
+
+        finalAngle = Math.max(cannon.min_angle, Math.min(finalAngle, cannon.max_angle));
+        finalPower = Math.max(cannon.min_power, Math.min(finalPower, cannon.max_power));
+        
+        sliders.angle.value = finalAngle * (180 / Math.PI);
+        sliders.power.value = finalPower;
+        handleSliderChange({ target: sliders.angle });
+        handleSliderChange({ target: sliders.power });
+
+        showMessage("");
+        fireCannon();
     }
 
-    // --- Main Game Loop (Drawing) ---
+    // --- 메인 게임 루프 (렌더링) ---
     function gameLoop() {
-        // Step the engine
         Engine.update(engine);
         
-        // Clear canvas
         ctx.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
         
-        // Draw Ground
-        ctx.fillStyle = '#228B22';
+        ctx.fillStyle = '#228B22'; // Ground
         ctx.fillRect(0, SCREEN_HEIGHT - GROUND_THICKNESS, SCREEN_WIDTH, GROUND_THICKNESS);
 
-        // Draw Cannon
         ctx.save();
         ctx.translate(CANNON_POS.x, CANNON_POS.y);
-        ctx.fillStyle = '#36454F';
-        // Base
+        ctx.fillStyle = '#36454F'; // Cannon
         ctx.beginPath();
         ctx.arc(0, 0, 15, Math.PI, 2 * Math.PI);
         ctx.fill();
-        // Barrel
-        ctx.rotate(-cannonAngle); // Negative because canvas Y is inverted
+        ctx.rotate(-cannonAngle);
         ctx.fillRect(0, -4, 40, 8);
         ctx.restore();
 
-        // Draw Target
-        ctx.fillStyle = '#696969';
-        const targetX = targetHole.position.x;
-        const targetY = SCREEN_HEIGHT - GROUND_THICKNESS;
-        ctx.fillRect(targetX - HOLE_WIDTH / 2 - 4, targetY - HOLE_HEIGHT, 8, HOLE_HEIGHT);
-        ctx.fillRect(targetX + HOLE_WIDTH / 2 - 4, targetY - HOLE_HEIGHT, 8, HOLE_HEIGHT);
-        ctx.fillRect(targetX - HOLE_WIDTH/2 -4, targetY, HOLE_WIDTH+8, 8);
+        if (targetHole) { // Target
+            ctx.fillStyle = '#696969';
+            const targetX = targetHole.position.x;
+            const targetY = SCREEN_HEIGHT - GROUND_THICKNESS;
+            ctx.fillRect(targetX - HOLE_WIDTH / 2 - 4, targetY - HOLE_HEIGHT, 8, HOLE_HEIGHT);
+            ctx.fillRect(targetX + HOLE_WIDTH / 2 - 4, targetY - HOLE_HEIGHT, 8, HOLE_HEIGHT);
+            ctx.fillRect(targetX - HOLE_WIDTH/2 -4, targetY, HOLE_WIDTH+8, 8);
+        }
 
-        // Draw Ball
-        if (ball) {
+        if (ball) { // Ball
             ctx.beginPath();
             ctx.arc(ball.position.x, ball.position.y, BALL_RADIUS, 0, 2 * Math.PI);
             ctx.fillStyle = '#000000';
             ctx.fill();
 
-            // Check if ball is out of bounds
             if (isFiring && (ball.position.x < 0 || ball.position.x > SCREEN_WIDTH || ball.position.y > SCREEN_HEIGHT)) {
                 isFiring = false;
-                showMessage("Out of bounds!", "#e27d60");
+                showMessage("장외!", "#e27d60");
             }
         }
 
         requestAnimationFrame(gameLoop);
     }
 
-    // --- Start the game ---
+    // --- 게임 시작 ---
     init();
 });
