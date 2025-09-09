@@ -224,7 +224,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const norm_wind = parseFloat(sliders.wind.value) / MAX_WIND_FORCE;
         
         const input = new ort.Tensor('float32', [norm_angle, norm_power, norm_target_x, norm_target_y, norm_wind], [1, 5]);
-        const feeds = { 'obs': input };
+        
+        // <<< 여기가 수정된 부분입니다 >>>
+        const feeds = { 'observation': input };
 
         const results = await ortSession.run(feeds);
         const action = results.actions.data;
@@ -289,6 +291,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         requestAnimationFrame(gameLoop);
     }
+
+
 
     // --- 게임 시작 ---
     init();
