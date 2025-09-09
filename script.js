@@ -40,7 +40,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 게임 상태 변수 ---
     let engine, world;
     let ground, ball;
-    // 목표물을 여러 객체의 묶음으로 관리
     let targetHoleGroup = []; 
     let cannonAngle = 45 * (Math.PI / 180);
     let cannonPower = 450;
@@ -68,20 +67,18 @@ document.addEventListener('DOMContentLoaded', () => {
         loadOnnxModel(); 
     }
     
-    // --- 레벨 생성 (충돌 로직 수정) ---
+    // --- 레벨 생성 ---
     function createLevel() {
         if (ball) Composite.remove(world, ball);
-        // 이전 레벨의 목표물 객체들을 모두 제거
         if (targetHoleGroup.length > 0) {
             Composite.remove(world, targetHoleGroup);
             targetHoleGroup = [];
         }
 
         const targetX = parseFloat(sliders.target.value);
-        const wallThickness = 8; // 벽 두께를 늘려 안정성 확보
+        const wallThickness = 8;
         const holeY = SCREEN_HEIGHT - GROUND_THICKNESS - (HOLE_HEIGHT / 2);
         
-        // 목표물을 구성하는 벽과 센서를 개별 객체로 생성
         const leftWall = Bodies.rectangle(targetX - HOLE_WIDTH / 2, holeY, wallThickness, HOLE_HEIGHT, { isStatic: true });
         const rightWall = Bodies.rectangle(targetX + HOLE_WIDTH / 2, holeY, wallThickness, HOLE_HEIGHT, { isStatic: true });
         const bottomWall = Bodies.rectangle(targetX, holeY + HOLE_HEIGHT/2 - wallThickness/2, HOLE_WIDTH + wallThickness, wallThickness, { isStatic: true });
@@ -91,15 +88,13 @@ document.addEventListener('DOMContentLoaded', () => {
             label: 'hole_sensor'
         });
 
-        // 생성된 객체들을 그룹에 추가하고 월드에 추가
         targetHoleGroup = [leftWall, rightWall, bottomWall, sensor];
         Composite.add(world, targetHoleGroup);
         
         isFiring = false;
         
-        // 바람 값 적용 로직 수정
         const windValue = parseFloat(sliders.wind.value);
-        world.gravity.x = windValue / 20000; // 스케일링 팩터 조정
+        world.gravity.x = windValue / 20000;
     }
     
     // --- 이벤트 리스너 설정 ---
@@ -114,7 +109,6 @@ document.addEventListener('DOMContentLoaded', () => {
              sliders.wind.value = -10 + Math.random() * 20;
              handleSliderChange({ target: sliders.target });
              handleSliderChange({ target: sliders.wind });
-             // createLevel()은 handleSliderChange에서 호출되므로 중복 호출 필요 없음
              showMessage("");
         });
         buttons.aiSolve.addEventListener('click', aiSolve);
@@ -143,15 +137,15 @@ document.addEventListener('DOMContentLoaded', () => {
             values.power.textContent = slider.value;
         } else if (slider === sliders.target) {
             values.target.textContent = slider.value;
-            createLevel(); // 목표 위치가 바뀌면 레벨 재생성
+            createLevel();
         } else if (slider === sliders.wind) {
             values.wind.textContent = slider.value;
             const windValue = parseFloat(sliders.wind.value);
-            world.gravity.x = windValue / 20000; // 스케일링 팩터 조정
+            world.gravity.x = windValue / 20000;
         }
     }
 
-    // --- 게임 액션 (파워 적용 방식 수정) ---
+    // --- 게임 액션 ---
     function fireCannon() {
         if (isFiring) return;
         isFiring = true;
@@ -167,19 +161,18 @@ document.addEventListener('DOMContentLoaded', () => {
             mass: BALL_MASS,
             restitution: 0.6,
             friction: 0.9,
-            frictionAir: 0, // 공기 저항은 바람(중력)으로만 제어
+            frictionAir: 0,
             label: 'ball'
         });
 
-        // 파이썬의 impulse와 유사하게 초기 속도를 직접 설정
-        const velocityMagnitude = cannonPower / (60 * BALL_MASS); // 60은 프레임레이트 기반 보정계수
+        const velocityMagnitude = cannonPower / (60 * BALL_MASS);
         const velocity = Vector.create(
             Math.cos(cannonAngle) * velocityMagnitude,
             -Math.sin(cannonAngle) * velocityMagnitude
         );
         
         World.add(world, ball);
-        Body.setVelocity(ball, velocity); // applyForce 대신 setVelocity 사용
+        Body.setVelocity(ball, velocity);
         
         setTimeout(() => {
             if (isFiring) {
@@ -202,11 +195,12 @@ document.addEventListener('DOMContentLoaded', () => {
         statusMessage.style.opacity = msg === "" ? 0 : 1;
     }
 
-    // --- ONNX AI 로더 및 솔버 (오류 수정 및 디버깅 추가) ---
+    // --- ONNX AI 로더 및 솔버 ---
     async function loadOnnxModel() {
         try {
             showMessage("AI 모델을 로딩 중입니다...");
             ortSession = await ort.InferenceSession.create('./model.onnx');
+            console.log("ONNX Model Loaded. Input Names:", ortSession.inputNames, "Output Names:", ortSession.outputNames);
             showMessage("AI 모델 로딩 완료!", "#50e3c2");
             setTimeout(() => showMessage(""), 2000);
         } catch (e) {
@@ -224,45 +218,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
         showMessage("AI가 계산 중입니다...");
 
-        const cannon = { min_angle: 0, max_angle: Math.PI / 2, min_power: 100, max_power: 800 };
-        const MAX_WIND_FORCE = 10.0; // 변경된 바람 최대치 적용
-        
-        const norm_angle = (cannonAngle - cannon.min_angle) / (cannon.max_angle - cannon.min_angle) * 2 - 1;
-        const norm_power = (cannonPower - cannon.min_power) / (cannon.max_power - cannon.min_power) * 2 - 1;
-        const norm_target_x = (parseFloat(sliders.target.value) / SCREEN_WIDTH) * 2 - 1;
-        const norm_target_y = ((SCREEN_HEIGHT - GROUND_THICKNESS) / SCREEN_HEIGHT) * 2 - 1;
-        const norm_wind = parseFloat(sliders.wind.value) / MAX_WIND_FORCE;
-        
-        const input = new ort.Tensor('float32', [norm_angle, norm_power, norm_target_x, norm_target_y, norm_wind], [1, 5]);
-        
-        // ONNX 모델의 입력 이름을 'observation'으로 명확히 지정
-        const feeds = { 'observation': input };
+        try {
+            const cannon = { min_angle: 0, max_angle: Math.PI / 2, min_power: 100, max_power: 800 };
+            const MAX_WIND_FORCE = 10.0;
+            
+            const norm_angle = (cannonAngle - cannon.min_angle) / (cannon.max_angle - cannon.min_angle) * 2 - 1;
+            const norm_power = (cannonPower - cannon.min_power) / (cannon.max_power - cannon.min_power) * 2 - 1;
+            const norm_target_x = (parseFloat(sliders.target.value) / SCREEN_WIDTH) * 2 - 1;
+            const norm_target_y = ((SCREEN_HEIGHT - GROUND_THICKNESS) / SCREEN_HEIGHT) * 2 - 1;
+            const norm_wind = parseFloat(sliders.wind.value) / MAX_WIND_FORCE;
+            
+            const inputTensor = new ort.Tensor('float32', [norm_angle, norm_power, norm_target_x, norm_target_y, norm_wind], [1, 5]);
+            
+            const feeds = { 'observation': inputTensor };
 
-        const results = await ortSession.run(feeds);
-        
-        // 디버깅을 위해 모델 출력 결과를 콘솔에 출력
-        console.log("ONNX Model Output:", results);
-        
-        // 모델의 출력 텐서 이름이 'actions'가 아닐 수 있으므로 확인 필요
-        // 만약 콘솔에서 다른 이름(예: 'output')으로 나온다면 아래 코드를 수정해야 함
-        const action = results.actions.data;
-        
-        const predicted_norm_angle = action[0];
-        const predicted_norm_power = action[1];
-        
-        let finalAngle = (predicted_norm_angle + 1) / 2 * (cannon.max_angle - cannon.min_angle) + cannon.min_angle;
-        let finalPower = (predicted_norm_power + 1) / 2 * (cannon.max_power - cannon.min_power) + cannon.min_power;
+            const results = await ortSession.run(feeds);
+            
+            // <<< 여기가 수정된 부분입니다 (actions -> action) >>>
+            // Python 스크립트에서 지정한 출력 이름 'action'을 사용합니다.
+            const actionTensor = results.action.data;
+            
+            const predicted_norm_angle = actionTensor[0];
+            const predicted_norm_power = actionTensor[1];
+            
+            let finalAngle = (predicted_norm_angle + 1) / 2 * (cannon.max_angle - cannon.min_angle) + cannon.min_angle;
+            let finalPower = (predicted_norm_power + 1) / 2 * (cannon.max_power - cannon.min_power) + cannon.min_power;
 
-        finalAngle = Math.max(cannon.min_angle, Math.min(finalAngle, cannon.max_angle));
-        finalPower = Math.max(cannon.min_power, Math.min(finalPower, cannon.max_power));
-        
-        sliders.angle.value = finalAngle * (180 / Math.PI);
-        sliders.power.value = finalPower;
-        handleSliderChange({ target: sliders.angle });
-        handleSliderChange({ target: sliders.power });
+            finalAngle = Math.max(cannon.min_angle, Math.min(finalAngle, cannon.max_angle));
+            finalPower = Math.max(cannon.min_power, Math.min(finalPower, cannon.max_power));
+            
+            sliders.angle.value = finalAngle * (180 / Math.PI);
+            sliders.power.value = finalPower;
+            handleSliderChange({ target: sliders.angle });
+            handleSliderChange({ target: sliders.power });
 
-        showMessage("");
-        fireCannon();
+            showMessage("");
+            fireCannon();
+        } catch(e) {
+            console.error("AI 추론 중 오류 발생:", e);
+            showMessage("AI 실행 오류!", "#e27d60");
+        }
     }
 
     // --- 메인 게임 루프 (렌더링) ---
@@ -282,18 +277,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.fillRect(0, -4, 40, 8);
         ctx.restore();
 
-        // 목표물 그룹 렌더링
         if (targetHoleGroup.length > 0) {
             ctx.fillStyle = '#696969';
-            // 벽들만 렌더링 (센서는 제외)
             targetHoleGroup.slice(0, 3).forEach(part => {
                 ctx.beginPath();
                 part.vertices.forEach((vertex, index) => {
-                    if (index === 0) {
-                        ctx.moveTo(vertex.x, vertex.y);
-                    } else {
-                        ctx.lineTo(vertex.x, vertex.y);
-                    }
+                    if (index === 0) ctx.moveTo(vertex.x, vertex.y);
+                    else ctx.lineTo(vertex.x, vertex.y);
                 });
                 ctx.closePath();
                 ctx.fill();
