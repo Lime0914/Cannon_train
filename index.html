@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Cannon Game Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>AI Cannon Game Demo</h1>
+        <p>
+            An interactive web demo of the Reinforcement Learning agent trained to solve a cannon physics puzzle. 
+            Set the target and wind, then try to hit the target yourself or let the "AI" find a solution.
+        </p>
+        
+        <div class="game-wrapper">
+            <canvas id="game-canvas"></canvas>
+            <div id="status-message" class="status"></div>
+        </div>
+
+        <div class="controls-grid">
+            <div class="control-group">
+                <h2>Environment</h2>
+                <div class="slider-control">
+                    <label for="target-slider">Target Position</label>
+                    <input type="range" id="target-slider" min="400" max="700" value="650">
+                    <span id="target-value">650</span>
+                </div>
+                <div class="slider-control">
+                    <label for="wind-slider">Wind Force</label>
+                    <input type="range" id="wind-slider" min="-200" max="200" value="50" step="10">
+                    <span id="wind-value">50</span>
+                </div>
+                 <button id="reset-button" class="btn">New Level</button>
+            </div>
+
+            <div class="control-group">
+                <h2>Manual Control</h2>
+                <div class="slider-control">
+                    <label for="angle-slider">Angle (degrees)</label>
+                    <input type="range" id="angle-slider" min="0" max="90" value="45">
+                    <span id="angle-value">45°</span>
+                </div>
+                <div class="slider-control">
+                    <label for="power-slider">Power</label>
+                    <input type="range" id="power-slider" min="100" max="800" value="450">
+                    <span id="power-value">450</span>
+                </div>
+                <button id="fire-button" class="btn action-btn">Fire Cannon</button>
+                <button id="ai-solve-button" class="btn ai-btn">Let AI Solve</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
