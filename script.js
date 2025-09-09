@@ -11,7 +11,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const CANNON_POS = { x: 100, y: SCREEN_HEIGHT - GROUND_THICKNESS - 20 };
     const HOLE_WIDTH = 40;
     const HOLE_HEIGHT = 40;
-    const POWER_SCALE = 0.005;
 
     // --- DOM 요소 ---
     const canvas = document.getElementById('game-canvas');
@@ -40,7 +39,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- 게임 상태 변수 ---
     let engine, world;
-    let ground, ball, targetHole;
+    let ground, ball;
+    // 목표물을 여러 객체의 묶음으로 관리
+    let targetHoleGroup = []; 
     let cannonAngle = 45 * (Math.PI / 180);
     let cannonPower = 450;
     let isFiring = false;
@@ -67,33 +68,38 @@ document.addEventListener('DOMContentLoaded', () => {
         loadOnnxModel(); 
     }
     
-    // --- 레벨 생성 ---
+    // --- 레벨 생성 (충돌 로직 수정) ---
     function createLevel() {
         if (ball) Composite.remove(world, ball);
-        if (targetHole) Composite.remove(world, targetHole);
+        // 이전 레벨의 목표물 객체들을 모두 제거
+        if (targetHoleGroup.length > 0) {
+            Composite.remove(world, targetHoleGroup);
+            targetHoleGroup = [];
+        }
 
         const targetX = parseFloat(sliders.target.value);
-        const wallThickness = 4;
+        const wallThickness = 8; // 벽 두께를 늘려 안정성 확보
         const holeY = SCREEN_HEIGHT - GROUND_THICKNESS - (HOLE_HEIGHT / 2);
         
-        const holeParts = [
-            Bodies.rectangle(targetX - HOLE_WIDTH / 2, holeY, wallThickness, HOLE_HEIGHT, { isStatic: true }),
-            Bodies.rectangle(targetX + HOLE_WIDTH / 2, holeY, wallThickness, HOLE_HEIGHT, { isStatic: true }),
-            Bodies.rectangle(targetX, holeY + HOLE_HEIGHT/2 - wallThickness/2, HOLE_WIDTH, wallThickness, { isStatic: true }),
-        ];
-        
+        // 목표물을 구성하는 벽과 센서를 개별 객체로 생성
+        const leftWall = Bodies.rectangle(targetX - HOLE_WIDTH / 2, holeY, wallThickness, HOLE_HEIGHT, { isStatic: true });
+        const rightWall = Bodies.rectangle(targetX + HOLE_WIDTH / 2, holeY, wallThickness, HOLE_HEIGHT, { isStatic: true });
+        const bottomWall = Bodies.rectangle(targetX, holeY + HOLE_HEIGHT/2 - wallThickness/2, HOLE_WIDTH + wallThickness, wallThickness, { isStatic: true });
         const sensor = Bodies.rectangle(targetX, holeY, HOLE_WIDTH - wallThickness, 1, {
             isStatic: true,
             isSensor: true,
             label: 'hole_sensor'
         });
 
-        targetHole = Body.create({ parts: [...holeParts, sensor], isStatic: true, label: 'targetHole' });
+        // 생성된 객체들을 그룹에 추가하고 월드에 추가
+        targetHoleGroup = [leftWall, rightWall, bottomWall, sensor];
+        Composite.add(world, targetHoleGroup);
         
-        World.add(world, targetHole);
         isFiring = false;
         
-        world.gravity.x = parseFloat(sliders.wind.value) / 100000;
+        // 바람 값 적용 로직 수정
+        const windValue = parseFloat(sliders.wind.value);
+        world.gravity.x = windValue / 20000; // 스케일링 팩터 조정
     }
     
     // --- 이벤트 리스너 설정 ---
@@ -105,10 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
         buttons.fire.addEventListener('click', fireCannon);
         buttons.reset.addEventListener('click', () => {
              sliders.target.value = 400 + Math.random() * 300;
-             sliders.wind.value = -200 + Math.random() * 400;
+             sliders.wind.value = -10 + Math.random() * 20;
              handleSliderChange({ target: sliders.target });
              handleSliderChange({ target: sliders.wind });
-             createLevel();
+             // createLevel()은 handleSliderChange에서 호출되므로 중복 호출 필요 없음
              showMessage("");
         });
         buttons.aiSolve.addEventListener('click', aiSolve);
@@ -137,14 +143,15 @@ document.addEventListener('DOMContentLoaded', () => {
             values.power.textContent = slider.value;
         } else if (slider === sliders.target) {
             values.target.textContent = slider.value;
-            createLevel();
+            createLevel(); // 목표 위치가 바뀌면 레벨 재생성
         } else if (slider === sliders.wind) {
             values.wind.textContent = slider.value;
-            world.gravity.x = parseFloat(slider.value) / 100000;
+            const windValue = parseFloat(sliders.wind.value);
+            world.gravity.x = windValue / 20000; // 스케일링 팩터 조정
         }
     }
 
-    // --- 게임 액션 ---
+    // --- 게임 액션 (파워 적용 방식 수정) ---
     function fireCannon() {
         if (isFiring) return;
         isFiring = true;
@@ -160,16 +167,19 @@ document.addEventListener('DOMContentLoaded', () => {
             mass: BALL_MASS,
             restitution: 0.6,
             friction: 0.9,
+            frictionAir: 0, // 공기 저항은 바람(중력)으로만 제어
             label: 'ball'
         });
 
-        const force = Vector.create(
-            Math.cos(cannonAngle) * cannonPower * POWER_SCALE,
-            -Math.sin(cannonAngle) * cannonPower * POWER_SCALE
+        // 파이썬의 impulse와 유사하게 초기 속도를 직접 설정
+        const velocityMagnitude = cannonPower / (60 * BALL_MASS); // 60은 프레임레이트 기반 보정계수
+        const velocity = Vector.create(
+            Math.cos(cannonAngle) * velocityMagnitude,
+            -Math.sin(cannonAngle) * velocityMagnitude
         );
         
-        Body.applyForce(ball, ball.position, force);
         World.add(world, ball);
+        Body.setVelocity(ball, velocity); // applyForce 대신 setVelocity 사용
         
         setTimeout(() => {
             if (isFiring) {
@@ -192,7 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statusMessage.style.opacity = msg === "" ? 0 : 1;
     }
 
-    // --- ONNX AI 로더 및 솔버 ---
+    // --- ONNX AI 로더 및 솔버 (오류 수정 및 디버깅 추가) ---
     async function loadOnnxModel() {
         try {
             showMessage("AI 모델을 로딩 중입니다...");
@@ -215,7 +225,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showMessage("AI가 계산 중입니다...");
 
         const cannon = { min_angle: 0, max_angle: Math.PI / 2, min_power: 100, max_power: 800 };
-        const MAX_WIND_FORCE = 200.0;
+        const MAX_WIND_FORCE = 10.0; // 변경된 바람 최대치 적용
         
         const norm_angle = (cannonAngle - cannon.min_angle) / (cannon.max_angle - cannon.min_angle) * 2 - 1;
         const norm_power = (cannonPower - cannon.min_power) / (cannon.max_power - cannon.min_power) * 2 - 1;
@@ -225,10 +235,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const input = new ort.Tensor('float32', [norm_angle, norm_power, norm_target_x, norm_target_y, norm_wind], [1, 5]);
         
-        // <<< 여기가 수정된 부분입니다 >>>
+        // ONNX 모델의 입력 이름을 'observation'으로 명확히 지정
         const feeds = { 'observation': input };
 
         const results = await ortSession.run(feeds);
+        
+        // 디버깅을 위해 모델 출력 결과를 콘솔에 출력
+        console.log("ONNX Model Output:", results);
+        
+        // 모델의 출력 텐서 이름이 'actions'가 아닐 수 있으므로 확인 필요
+        // 만약 콘솔에서 다른 이름(예: 'output')으로 나온다면 아래 코드를 수정해야 함
         const action = results.actions.data;
         
         const predicted_norm_angle = action[0];
@@ -252,9 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 메인 게임 루프 (렌더링) ---
     function gameLoop() {
         Engine.update(engine);
-        
         ctx.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-        
         ctx.fillStyle = '#228B22'; // Ground
         ctx.fillRect(0, SCREEN_HEIGHT - GROUND_THICKNESS, SCREEN_WIDTH, GROUND_THICKNESS);
 
@@ -268,13 +282,22 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.fillRect(0, -4, 40, 8);
         ctx.restore();
 
-        if (targetHole) { // Target
+        // 목표물 그룹 렌더링
+        if (targetHoleGroup.length > 0) {
             ctx.fillStyle = '#696969';
-            const targetX = targetHole.position.x;
-            const targetY = SCREEN_HEIGHT - GROUND_THICKNESS;
-            ctx.fillRect(targetX - HOLE_WIDTH / 2 - 4, targetY - HOLE_HEIGHT, 8, HOLE_HEIGHT);
-            ctx.fillRect(targetX + HOLE_WIDTH / 2 - 4, targetY - HOLE_HEIGHT, 8, HOLE_HEIGHT);
-            ctx.fillRect(targetX - HOLE_WIDTH/2 -4, targetY, HOLE_WIDTH+8, 8);
+            // 벽들만 렌더링 (센서는 제외)
+            targetHoleGroup.slice(0, 3).forEach(part => {
+                ctx.beginPath();
+                part.vertices.forEach((vertex, index) => {
+                    if (index === 0) {
+                        ctx.moveTo(vertex.x, vertex.y);
+                    } else {
+                        ctx.lineTo(vertex.x, vertex.y);
+                    }
+                });
+                ctx.closePath();
+                ctx.fill();
+            });
         }
 
         if (ball) { // Ball
@@ -282,17 +305,13 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.arc(ball.position.x, ball.position.y, BALL_RADIUS, 0, 2 * Math.PI);
             ctx.fillStyle = '#000000';
             ctx.fill();
-
-            if (isFiring && (ball.position.x < 0 || ball.position.x > SCREEN_WIDTH || ball.position.y > SCREEN_HEIGHT)) {
+            if (isFiring && (ball.position.x < -BALL_RADIUS || ball.position.x > SCREEN_WIDTH + BALL_RADIUS || ball.position.y > SCREEN_HEIGHT + BALL_RADIUS)) {
                 isFiring = false;
                 showMessage("장외!", "#e27d60");
             }
         }
-
         requestAnimationFrame(gameLoop);
     }
-
-
 
     // --- 게임 시작 ---
     init();
