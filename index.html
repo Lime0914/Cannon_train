@@ -1,17 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Cannon Game Demo</title>
+    <title>AI Cannon Game Demo (ONNX)</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>AI Cannon Game Demo</h1>
+        <h1>AI Cannon Game Demo (ONNX)</h1>
         <p>
-            An interactive web demo of the Reinforcement Learning agent trained to solve a cannon physics puzzle. 
-            Set the target and wind, then try to hit the target yourself or let the "AI" find a solution.
+            ONNX 모델을 직접 구동하는 강화학습 AI 데모입니다. 
+            환경을 설정하고 직접 도전해보거나, 'AI Solve' 버튼으로 실제 훈련된 AI의 해결책을 확인하세요.
         </p>
         
         <div class="game-wrapper">
@@ -21,36 +22,39 @@
 
         <div class="controls-grid">
             <div class="control-group">
-                <h2>Environment</h2>
+                <h2>환경 설정</h2>
                 <div class="slider-control">
-                    <label for="target-slider">Target Position</label>
+                    <label for="target-slider">목표물 위치</label>
                     <input type="range" id="target-slider" min="400" max="700" value="650">
                     <span id="target-value">650</span>
                 </div>
                 <div class="slider-control">
-                    <label for="wind-slider">Wind Force</label>
+                    <label for="wind-slider">바람 세기</label>
                     <input type="range" id="wind-slider" min="-200" max="200" value="50" step="10">
                     <span id="wind-value">50</span>
                 </div>
-                 <button id="reset-button" class="btn">New Level</button>
+                 <button id="reset-button" class="btn">새로운 레벨</button>
             </div>
 
             <div class="control-group">
-                <h2>Manual Control</h2>
+                <h2>수동 조작</h2>
                 <div class="slider-control">
-                    <label for="angle-slider">Angle (degrees)</label>
+                    <label for="angle-slider">각도 (도)</label>
                     <input type="range" id="angle-slider" min="0" max="90" value="45">
                     <span id="angle-value">45°</span>
                 </div>
                 <div class="slider-control">
-                    <label for="power-slider">Power</label>
+                    <label for="power-slider">힘</label>
                     <input type="range" id="power-slider" min="100" max="800" value="450">
                     <span id="power-value">450</span>
                 </div>
-                <button id="fire-button" class="btn action-btn">Fire Cannon</button>
-                <button id="ai-solve-button" class="btn ai-btn">Let AI Solve</button>
+                <button id="fire-button" class="btn action-btn">발사</button>
+                <button id="ai-solve-button" class="btn ai-btn">AI로 해결</button>
             </div>
         </div>
+        <p class="footer-note">
+            <strong>참고:</strong> 'AI로 해결' 버튼을 사용하려면 <code>model.onnx</code> 파일이 이 웹페이지와 같은 폴더에 있어야 합니다.
+        </p>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
