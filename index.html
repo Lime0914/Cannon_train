@@ -3,61 +3,249 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Cannon Game Demo (ONNX) - v2</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <title>AI 캐논 챌린지</title>
+    <style>
+        :root {
+            --sky-color: #87CEEB; --ground-color: #2ECC71; --cannon-color: #2C3E50;
+            --ball-color: #000000; --hole-color: #34495E; --loader-color: #2C3E50;
+            --success-text-color: #27AE60; --fail-text-color: #E74C3C;
+        }
+        body {
+            margin: 0; overflow: hidden; display: flex;
+            justify-content: center; align-items: center;
+            height: 100vh; background-color: var(--sky-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        canvas {
+            background-color: var(--sky-color); border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); display: none; 
+        }
+        .loader-container {
+            position: absolute; display: flex; flex-direction: column;
+            align-items: center; gap: 20px;
+        }
+        .loader {
+            width: 20px; height: 20px; background-color: var(--loader-color);
+            border-radius: 50%; animation: pulse 1.5s ease-in-out infinite;
+        }
+        .loader-text { font-size: 1.2em; font-weight: 500; color: var(--loader-color); }
+        @keyframes pulse {
+            0% { transform: scale(0.8); opacity: 0.7; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(0.8); opacity: 0.7; }
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>AI Cannon Game Demo (ONNX) - v2</h1>
-        <p>
-            물리 엔진 및 AI 모델 로직이 개선된 데모입니다.
-            환경을 설정하고 직접 도전해보거나, 'AI로 해결' 버튼으로 실제 훈련된 AI의 해결책을 확인하세요.
-        </p>
-        
-        <div class="game-wrapper">
-            <canvas id="game-canvas"></canvas>
-            <div id="status-message" class="status"></div>
-        </div>
-
-        <div class="controls-grid">
-            <div class="control-group">
-                <h2>환경 설정</h2>
-                <div class="slider-control">
-                    <label for="target-slider">목표물 위치</label>
-                    <input type="range" id="target-slider" min="400" max="700" value="650">
-                    <span id="target-value">650</span>
-                </div>
-                <div class="slider-control">
-                    <label for="wind-slider">바람 세기</label>
-                    <input type="range" id="wind-slider" min="-10" max="10" value="0" step="1">
-                    <span id="wind-value">0</span>
-                </div>
-                 <button id="reset-button" class="btn">새로운 레벨</button>
-            </div>
-
-            <div class="control-group">
-                <h2>수동 조작</h2>
-                <div class="slider-control">
-                    <label for="angle-slider">각도 (도)</label>
-                    <input type="range" id="angle-slider" min="0" max="90" value="45">
-                    <span id="angle-value">45°</span>
-                </div>
-                <div class="slider-control">
-                    <label for="power-slider">힘</label>
-                    <input type="range" id="power-slider" min="100" max="800" value="450">
-                    <span id="power-value">450</span>
-                </div>
-                <button id="fire-button" class="btn action-btn">발사</button>
-                <button id="ai-solve-button" class="btn ai-btn">AI로 해결</button>
-            </div>
-        </div>
-        <p class="footer-note">
-            <strong>오류 발생 시:</strong> 브라우저 개발자 도구(F12)의 Console 탭을 확인하고, 페이지를 <strong>강력 새로고침(Ctrl+Shift+R)</strong> 해보세요.
-        </p>
+    <div class="loader-container" id="loader">
+        <div class="loader"></div>
+        <div class="loader-text">AI 모델 로딩 중...</div>
     </div>
+    <canvas id="gameCanvas"></canvas>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const loader = document.getElementById('loader');
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
-    <script src="script.js"></script>
+        const rootStyles = getComputedStyle(document.documentElement);
+        const COLORS = {
+            sky: rootStyles.getPropertyValue('--sky-color').trim(),
+            ground: rootStyles.getPropertyValue('--ground-color').trim(),
+            cannon: rootStyles.getPropertyValue('--cannon-color').trim(),
+            ball: rootStyles.getPropertyValue('--ball-color').trim(),
+            hole: rootStyles.getPropertyValue('--hole-color').trim(),
+            success: rootStyles.getPropertyValue('--success-text-color').trim(),
+            fail: rootStyles.getPropertyValue('--fail-text-color').trim()
+        };
+
+        const SCREEN_WIDTH = 800, SCREEN_HEIGHT = 600, GROUND_THICKNESS = 50;
+        const GRAVITY = 900.0, MAX_WIND_FORCE = 200.0;
+        const CANNON_MIN_POWER = 100, CANNON_MAX_POWER = 800, CANNON_MIN_ANGLE = 0, CANNON_MAX_ANGLE = Math.PI / 2;
+
+        canvas.width = SCREEN_WIDTH; canvas.height = SCREEN_HEIGHT;
+
+        let ortSession = null, gameState = 'LOADING';
+        let cannon, ball, target, windForce;
+        let lastTime = 0, feedbackDisplayTimer = 0, groundContactTimer = 0;
+
+        class Cannon { 
+            constructor() {
+                this.x = 80; // AI 학습 환경과의 일관성을 위해 100으로 유지
+                this.y = SCREEN_HEIGHT - GROUND_THICKNESS - 20;
+                this.angle = Math.PI / 4; this.power = 450;
+                this.barrelLength = 40; this.barrelThickness = 12; this.baseRadius = 18;
+            }
+            draw() { const drawX = Math.round(this.x), drawY = Math.round(this.y); ctx.save(); ctx.fillStyle = COLORS.cannon; ctx.beginPath(); ctx.arc(drawX, drawY, this.baseRadius, 0, Math.PI * 2); ctx.fill(); ctx.translate(drawX, drawY); ctx.rotate(-this.angle); ctx.beginPath(); ctx.fillRect(0, -this.barrelThickness / 2, this.barrelLength, this.barrelThickness); ctx.restore(); }
+        }
+        class Ball { 
+            constructor(x, y, vx, vy) {
+                this.x = x; this.y = y; this.vx = vx; this.vy = vy;
+                this.radius = 8; this.elasticity = 0.6;
+            }
+            update(dt, wind) {
+                this.vx += wind * dt;
+                this.vy += GRAVITY * dt;
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+            }
+            draw() { const drawX = Math.round(this.x), drawY = Math.round(this.y); ctx.fillStyle = COLORS.ball; ctx.beginPath(); ctx.arc(drawX, drawY, this.radius, 0, Math.PI * 2); ctx.fill(); }
+        }
+        class Target {
+            constructor(x) {
+                this.x = x; this.y = SCREEN_HEIGHT - GROUND_THICKNESS;
+                this.width = 40; this.height = 40; this.thickness = 4;
+            }
+            draw() { const drawX = Math.round(this.x), drawY = Math.round(this.y), halfWidth = this.width / 2; ctx.fillStyle = COLORS.hole; ctx.fillRect(drawX - halfWidth - this.thickness, drawY - this.height, this.thickness, this.height); ctx.fillRect(drawX + halfWidth, drawY - this.height, this.thickness, this.height); ctx.fillRect(drawX - halfWidth - this.thickness, drawY, this.width + (this.thickness * 2), this.thickness); }
+        }
+
+        async function runAI() {
+            if (gameState !== 'AIMING' || !ortSession) return;
+            const normAngle = (cannon.angle - CANNON_MIN_ANGLE) / (CANNON_MAX_ANGLE - CANNON_MIN_ANGLE) * 2 - 1, normPower = (cannon.power - CANNON_MIN_POWER) / (CANNON_MAX_POWER - CANNON_MIN_POWER) * 2 - 1, normTargetX = (target.x / SCREEN_WIDTH) * 2 - 1, normTargetY = (GROUND_THICKNESS / SCREEN_HEIGHT) * 2 - 1, normWind = windForce / MAX_WIND_FORCE;
+            const observation = new Float32Array([normAngle, normPower, normTargetX, normTargetY, normWind]);
+            const tensor = new ort.Tensor('float32', observation, [1, 5]);
+            const results = await ortSession.run({ 'observation': tensor });
+            const action = results.action.data;
+            const newAngle = (action[0] + 1) / 2 * (CANNON_MAX_ANGLE - CANNON_MIN_ANGLE) + CANNON_MIN_ANGLE, newPower = (action[1] + 1) / 2 * (CANNON_MAX_POWER - CANNON_MIN_POWER) + CANNON_MIN_POWER;
+            cannon.angle = Math.max(CANNON_MIN_ANGLE, Math.min(newAngle, CANNON_MAX_ANGLE)); cannon.power = Math.max(CANNON_MIN_POWER, Math.min(newPower, CANNON_MAX_POWER));
+            fireCannon();
+        }
+        function fireCannon() {
+            const barrelEndX = cannon.x + Math.cos(cannon.angle) * cannon.barrelLength, barrelEndY = cannon.y - Math.sin(cannon.angle) * cannon.barrelLength;
+            const vx = Math.cos(cannon.angle) * cannon.power, vy = -Math.sin(cannon.angle) * cannon.power;
+            ball = new Ball(barrelEndX, barrelEndY, vx, vy); gameState = 'FIRING';
+        }
+        function resetGame() {
+            const minTargetX = 400, maxTargetX = SCREEN_WIDTH - 100;
+            const targetX = minTargetX + Math.random() * (maxTargetX - minTargetX);
+            windForce = (Math.random() * 2 - 1) * MAX_WIND_FORCE;
+            cannon = new Cannon(); target = new Target(targetX); ball = null;
+            gameState = 'AIMING'; feedbackDisplayTimer = 0; groundContactTimer = 0;
+            setTimeout(runAI, 500);
+        }
+        
+        function update(dt) {
+            if (gameState !== 'FIRING' || !ball) {
+                if(gameState === 'SUCCESS' || gameState === 'FAILED'){
+                    feedbackDisplayTimer -= dt;
+                    if(feedbackDisplayTimer <= 0) resetGame();
+                }
+                return;
+            };
+
+            // ** [수정] ball.update() 호출 전에 이전 위치를 저장합니다. **
+            const prevY = ball.y;
+            ball.update(dt, windForce);
+            
+            const groundY = SCREEN_HEIGHT - GROUND_THICKNESS;
+            const holeLeft = target.x - target.width / 2, holeRight = target.x + target.width / 2;
+            const holeTop = target.y - target.height;
+            const wallOuterLeft = holeLeft - target.thickness, wallOuterRight = holeRight + target.thickness;
+
+            // --- [수정] 재작성된 충돌 로직 ---
+
+            // 1. 목표 지점 구조물과의 충돌 처리 (y좌표가 벽 영역에 있을 때만 검사)
+            if (ball.y + ball.radius > holeTop && ball.y - ball.radius < target.y) {
+                
+                // 1a. 바깥쪽 벽 충돌
+                // 왼쪽 바깥벽
+                if (ball.vx > 0 && ball.x + ball.radius > wallOuterLeft && ball.x - ball.radius < wallOuterLeft) {
+                    ball.x = wallOuterLeft - ball.radius; ball.vx *= -ball.elasticity;
+                }
+                // 오른쪽 바깥벽
+                if (ball.vx < 0 && ball.x - ball.radius < wallOuterRight && ball.x + ball.radius > wallOuterRight) {
+                    ball.x = wallOuterRight + ball.radius; ball.vx *= -ball.elasticity;
+                }
+
+                // 1b. 안쪽 벽 충돌
+                // 왼쪽 안쪽벽
+                if (ball.vx < 0 && ball.x - ball.radius < holeLeft && ball.x + ball.radius > holeLeft) {
+                     ball.x = holeLeft + ball.radius; ball.vx *= -ball.elasticity;
+                }
+                // 오른쪽 안쪽벽
+                if (ball.vx > 0 && ball.x + ball.radius > holeRight && ball.x - ball.radius < holeRight) {
+                    ball.x = holeRight - ball.radius; ball.vx *= -ball.elasticity;
+                }
+                
+                // 1c. 벽 윗면 충돌 (아래로 떨어지는 공만 해당)
+                if (ball.vy > 0 && ball.y + ball.radius > holeTop && prevY + ball.radius <= holeTop) {
+                    // 왼쪽 벽 윗면
+                    if (ball.x >= wallOuterLeft && ball.x <= holeLeft) {
+                        ball.y = holeTop - ball.radius; ball.vy *= -ball.elasticity;
+                    }
+                    // 오른쪽 벽 윗면
+                    if (ball.x >= holeRight && ball.x <= wallOuterRight) {
+                        ball.y = holeTop - ball.radius; ball.vy *= -ball.elasticity;
+                    }
+                }
+            }
+            
+            // 2. 성공 판정
+            if (ball.y > holeTop && ball.x > holeLeft && ball.x < holeRight && ball.y + ball.radius >= groundY) {
+                 gameState = 'SUCCESS'; feedbackDisplayTimer = 1.5; return;
+            }
+
+            // 3. 바닥 충돌 및 타이머
+            if (ball.y >= groundY - ball.radius) {
+                ball.y = groundY - ball.radius; ball.vy *= -ball.elasticity; ball.vx *= 0.95;
+                groundContactTimer += dt;
+            } else {
+                groundContactTimer = 0;
+            }
+
+            // 4. 실패 판정
+            const isStopped = Math.abs(ball.vx) < 1 && Math.abs(ball.vy) < 1;
+            const isOutOfBounds = ball.x < -50 || ball.x > SCREEN_WIDTH + 50 || ball.y > SCREEN_HEIGHT + 50;
+            const isTimedOutOnGround = groundContactTimer >= 2.0;
+
+            if (isOutOfBounds || (isStopped && ball.y >= groundY - ball.radius - 1) || isTimedOutOnGround) {
+                if (gameState === 'FIRING') {
+                    gameState = 'FAILED'; feedbackDisplayTimer = 1.5;
+                }
+            }
+        }
+        
+        function draw() { /* 이전과 동일 */ 
+            ctx.fillStyle = COLORS.sky; ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            ctx.fillStyle = COLORS.ground; ctx.fillRect(0, SCREEN_HEIGHT - GROUND_THICKNESS, SCREEN_WIDTH, GROUND_THICKNESS);
+            target.draw(); cannon.draw(); if (ball) ball.draw();
+            drawWind();
+            ctx.font = "bold 60px sans-serif"; ctx.textAlign = "center";
+            if(gameState === 'SUCCESS') {
+                ctx.fillStyle = COLORS.success; ctx.fillText("성공!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+            } else if (gameState === 'FAILED' && feedbackDisplayTimer > 0) {
+                ctx.fillStyle = COLORS.fail; ctx.fillText("실패!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+            }
+        }
+        function drawWind() { /* 이전과 동일 */ 
+            const windIndicatorX = SCREEN_WIDTH / 2, windIndicatorY = 40, maxArrowLength = 50;
+            const arrowLength = (windForce / MAX_WIND_FORCE) * maxArrowLength;
+            ctx.save();
+            ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            const startX = windIndicatorX - (arrowLength > 0 ? arrowLength : 0), endX = windIndicatorX - (arrowLength < 0 ? arrowLength : 0);
+            ctx.beginPath(); ctx.moveTo(startX, windIndicatorY); ctx.lineTo(endX, windIndicatorY); ctx.stroke();
+            ctx.beginPath();
+            if (arrowLength > 0) { ctx.moveTo(endX, windIndicatorY - 8); ctx.lineTo(endX + 15, windIndicatorY); ctx.lineTo(endX, windIndicatorY + 8); }
+            else if (arrowLength < 0) { ctx.moveTo(endX, windIndicatorY - 8); ctx.lineTo(endX - 15, windIndicatorY); ctx.lineTo(endX, windIndicatorY + 8); }
+            ctx.fill(); ctx.restore();
+        }
+        function gameLoop(timestamp) { /* 이전과 동일 */ 
+            const dt = (timestamp - lastTime) / 1000;
+            lastTime = timestamp; update(dt || 0); draw();
+            requestAnimationFrame(gameLoop);
+        }
+        async function initialize() { /* 이전과 동일 */ 
+            try {
+                ortSession = await ort.InferenceSession.create('./model.onnx');
+                loader.style.display = 'none'; canvas.style.display = 'block';
+                resetGame(); requestAnimationFrame(gameLoop);
+            } catch (error) {
+                loader.innerHTML = `<div class="loader-text">오류: model.onnx 파일을 로드할 수 없습니다. <br/> 같은 폴더에 파일이 있는지 확인하세요.</div>`;
+            }
+        }
+        initialize();
+    });
+    </script>
 </body>
 </html>
