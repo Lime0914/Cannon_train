@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Cannon Game Demo (ONNX)</title>
+    <title>AI Cannon Game Demo (ONNX) - v2</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>AI Cannon Game Demo (ONNX)</h1>
+        <h1>AI Cannon Game Demo (ONNX) - v2</h1>
         <p>
-            ONNX 모델을 직접 구동하는 강화학습 AI 데모입니다. 
-            환경을 설정하고 직접 도전해보거나, 'AI Solve' 버튼으로 실제 훈련된 AI의 해결책을 확인하세요.
+            물리 엔진 및 AI 모델 로직이 개선된 데모입니다.
+            환경을 설정하고 직접 도전해보거나, 'AI로 해결' 버튼으로 실제 훈련된 AI의 해결책을 확인하세요.
         </p>
         
         <div class="game-wrapper">
@@ -30,8 +30,8 @@
                 </div>
                 <div class="slider-control">
                     <label for="wind-slider">바람 세기</label>
-                    <input type="range" id="wind-slider" min="-200" max="200" value="50" step="10">
-                    <span id="wind-value">50</span>
+                    <input type="range" id="wind-slider" min="-10" max="10" value="0" step="1">
+                    <span id="wind-value">0</span>
                 </div>
                  <button id="reset-button" class="btn">새로운 레벨</button>
             </div>
@@ -53,7 +53,7 @@
             </div>
         </div>
         <p class="footer-note">
-            <strong>참고:</strong> 'AI로 해결' 버튼을 사용하려면 <code>model.onnx</code> 파일이 이 웹페이지와 같은 폴더에 있어야 합니다.
+            <strong>오류 발생 시:</strong> 브라우저 개발자 도구(F12)의 Console 탭을 확인하고, 페이지를 <strong>강력 새로고침(Ctrl+Shift+R)</strong> 해보세요.
         </p>
     </div>
 
